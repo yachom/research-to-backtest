@@ -47,6 +47,14 @@ class StrategyValidationError(ResearchBacktestError):
     """전략 DSL이 스키마·지표 레지스트리 검증(README §21, §31 M8)을 통과하지 못한 경우."""
 
 
+class ApprovalGateError(ResearchBacktestError):
+    """Human-in-the-Loop 승인 게이트 위반 (docs/HUMAN_IN_THE_LOOP.md §3).
+
+    미승인 가설의 전략 변환, 승인 기록 없는 백테스트 실행, 허용되지 않은
+    파이프라인 상태 전이 등 — 자동으로 승인 단계를 건너뛰지 않는다.
+    """
+
+
 class XbrlParseError(ResearchBacktestError):
     """XBRL 원본 파싱 실패 (README §9, §19.5)."""
 

@@ -24,3 +24,6 @@ outputs/
 .DS_Store
 .idea/
 .vscode/
+
+# Claude Code 세션·워크트리 (병렬 에이전트 작업 공간 — 커밋 금지)
+.claude/
