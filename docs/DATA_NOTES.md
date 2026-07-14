@@ -86,6 +86,21 @@
 5. **2020.12 사업보고서는 원본(20210322000782)과 [기재정정](20210330000776) 두
    접수번호가 모두 수집됨** — B4 정정공시 버전 그래프의 실데이터 케이스.
 
+## B3 API-XBRL 대조 실측 (2026-07-14, 290행 대조)
+
+1. **연간 5개년 × CFS/OFS × 7계정 = 70건 전량 MATCH(100%)** — 전체 290행 중
+   MATCH 260, REQUIRES_REVIEW 30(전부 benign), CONTEXT/SCOPE/MISSING 계열 0건.
+2. **Q1 손익의 구조적 context 중복**: Q1 보고서는 3개월(...dFQQ)과 누적(...dFQA)
+   context가 **동일 (1/1~3/31) 기간·동일 값**으로 공존 → 날짜만으로 구분 불가,
+   후보 2개 → REQUIRES_REVIEW 30건의 전부(값은 일치). Q1은 단독=누적이므로 무해.
+3. **연결/별도 member 실측**: 축 `ifrs-full:ConsolidatedAndSeparateFinancialStatementsAxis`,
+   member `ConsolidatedMember`/`SeparateMember`.
+4. **오분류 함정 2건**: ① dart taxonomy uri(`.../ifrs/dart`)가 'ifrs' 문자열을
+   부분포함 — naive 포함 매칭 금지, taxonomy tail 기준으로 판정 ② `dart-gcd:`에도
+   동명 Consolidated/SeparateMember가 있으나 **다른 축**(StatementInformationAxis)
+   — "해당 축 ∧ 차원 정확히 1개" 조건으로 배제.
+5. registry 7계정의 concept/label 매칭이 XBRL 쪽에서도 100% 동작 — 개정 불요.
+
 ## 기업 식별(A1) 관찰
 
 - 축약 검색어가 동명의 비상장사에 정확 일치할 수 있다 — 예: "삼성" →
