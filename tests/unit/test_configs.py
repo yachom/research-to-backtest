@@ -14,15 +14,25 @@ VALID_PERIOD_TYPES = {"instant", "duration"}
 
 
 def test_account_registry_entries_have_required_keys() -> None:
+    # A4 §2: statement_type(단일) → statement_types(복수)로 스키마 개정
     registry = yaml.safe_load((CONFIG_DIR / "account_registry.yaml").read_text(encoding="utf-8"))
     assert registry, "레지스트리가 비어 있다"
-    required = {"korean_name", "statement_type", "period_type", "accepted_labels"}
+    required = {"korean_name", "statement_types", "period_type", "accepted_labels"}
     for canonical_id, entry in registry.items():
         missing = required - entry.keys()
         assert not missing, f"{canonical_id}에 필수 키 누락: {missing}"
-        assert entry["statement_type"] in VALID_STATEMENT_TYPES, canonical_id
+        statement_types = entry["statement_types"]
+        assert isinstance(statement_types, list) and statement_types, canonical_id
+        assert all(sj in VALID_STATEMENT_TYPES for sj in statement_types), canonical_id
         assert entry["period_type"] in VALID_PERIOD_TYPES, canonical_id
         assert entry["accepted_labels"], canonical_id
+
+
+def test_income_accounts_allow_is_and_cis() -> None:
+    # DATA_NOTES A2-①: SK하이닉스는 손익이 전부 CIS → 손익 계정은 IS·CIS 모두 허용
+    registry = yaml.safe_load((CONFIG_DIR / "account_registry.yaml").read_text(encoding="utf-8"))
+    for canonical_id in ("revenue", "operating_income", "net_income"):
+        assert set(registry[canonical_id]["statement_types"]) == {"IS", "CIS"}, canonical_id
 
 
 def test_account_registry_covers_milestone5_targets() -> None:
