@@ -50,6 +50,24 @@
    영향받지 않는다. coverage 밖 조회는 CalendarRangeError로 즉시 실패
    (주말 로직 대체 금지 — 룩어헤드 방지).
 
+## A4 재무 정규화 실측 (2026-07-14, 00164779 5개년 빌드)
+
+1. **분기 CF의 금액 의미론은 손익과 정반대다.** CF 행에는 `thstrm_add_amount`
+   필드가 아예 없고 **`thstrm_amount`가 누적(YTD)**이다(손익은 thstrm=3개월,
+   add=누적). 단독분기 CF는 인접 누적의 차분으로만 얻으며 Q2~Q4가 전부
+   DERIVED_QUARTER다. telescoping 성질로 4개 단독 합=연간이 5개년 모두 정확 성립.
+2. **trade_receivables는 concept 미일치의 실증 사례**: SK하이닉스는 표준
+   `ifrs-full:TradeAndOtherCurrentReceivables`가 아니라
+   `ifrs-full_CurrentTradeReceivables`로 보고 → label('매출채권') 경로로 매칭됨.
+   README §12.1의 concept→label 다단 매칭이 실제로 필요함을 확인.
+3. **YoY abs-분모 규약 실측**: 2023 적자 기저에서 2024 operating_income_yoy가
+   전 분기 양수(1.85/2.90/4.92/22.36), 2025는 1.578/0.685/0.619/1.372(Q4 파생).
+   §23 기본 전략의 "YoY > 0.2" 신호가 의미 있게 작동하는 값 범위다.
+4. 회계식(자산=부채+자본) 50개 기간 전부 통과 — 단 2022 Q3 영업이익 교차검증에서
+   정확히 -1,000,000 KRW 반올림 오차 관찰(허용오차 경계 사례, `<=` 판정 필요).
+5. 매칭 커버리지: 11개 계정 × 40파일 전량, UNRESOLVED 0. 미매칭 3,765행은
+   세부계정(정상), SCE 2,231행은 설계대로 스킵.
+
 ## B1+B2 XBRL 실측 (2026-07-14, SK하이닉스 2021~2025 정기보고서 22건)
 
 1. **ZIP 구성**: instance **1개**(`entity{corp_code}_{결산일}.xbrl`) + `.xsd` + 링크베이스
