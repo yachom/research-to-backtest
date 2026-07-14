@@ -114,7 +114,15 @@ class DartClient:
         013/014(조회 데이터 없음 계열)의 처리는 호출부 책임이다 —
         ``err.is_no_data``로 구분한다(README §27.1).
         """
-        return self._request(path, dict(params), self._parse_json)
+        return self.get_json_text(path, **params)[0]
+
+    def get_json_text(self, path: str, **params: str) -> tuple[dict[str, Any], str]:
+        """get_json과 동일한 status 처리 + 응답 원문 텍스트를 함께 반환한다.
+
+        원문 보존(README §8.1 취지)이 필요한 수집기(전체 재무제표 API,
+        명세 A2 §3.1)가 재직렬화 없이 응답을 그대로 저장할 수 있게 한다.
+        """
+        return self._request(path, dict(params), self._parse_json_text)
 
     def get_bytes(self, path: str, **params: str) -> bytes:
         """바이너리(ZIP) API를 호출한다.
@@ -192,6 +200,9 @@ class DartClient:
         if not self._backoff_seconds:
             return 0.0
         return self._backoff_seconds[min(retry_index, len(self._backoff_seconds) - 1)]
+
+    def _parse_json_text(self, response: httpx.Response) -> tuple[dict[str, Any], str]:
+        return self._parse_json(response), response.text
 
     def _parse_json(self, response: httpx.Response) -> dict[str, Any]:
         try:

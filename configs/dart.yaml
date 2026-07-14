@@ -3,6 +3,8 @@ base_url: https://opendart.fss.or.kr/api
 
 request:
   timeout_seconds: 30
+  # 실제 API 호출 사이 최소 대기 간격(초) — 캐시 히트는 대기 없음 (명세 A2 §4)
+  min_interval_seconds: 0.1
   # 재시도 정책 (README §27.3)
   retry:
     max_attempts: 4

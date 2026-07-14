@@ -1,11 +1,12 @@
 """Research-to-Backtest CLI (README §26).
 
-resolve-company는 Milestone A1에서 구현되었다. 나머지 명령의 구현 시점은
-docs/MILESTONES.md의 Phase 표를 따른다.
+resolve-company(A1)·collect-financials(A2)는 구현되었다. 나머지 명령의
+구현 시점은 docs/MILESTONES.md의 Phase 표를 따른다.
 """
 
 from collections.abc import Sequence
 from datetime import date, datetime
+from pathlib import Path
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
@@ -15,11 +16,24 @@ from rich.table import Table
 
 from research_backtest import __version__
 from research_backtest.core.config import get_settings, load_dart_config
-from research_backtest.core.constants import PeriodicReportType
+from research_backtest.core.constants import FsDiv, PeriodicReportType, ReprtCode, StatementType
 from research_backtest.core.dart.client import DartClient
-from research_backtest.core.dart.corp_code import corp_code_cache_dir, load_corp_code_registry
+from research_backtest.core.dart.corp_code import (
+    CorpCodeRegistry,
+    corp_code_cache_dir,
+    load_corp_code_registry,
+)
 from research_backtest.core.dart.disclosure_search import find_periodic_filings, latest_filing
-from research_backtest.core.dart.models import DartFiling, ResolveResult
+from research_backtest.core.dart.financial_api import (
+    JSONL_FILENAME,
+    MIN_SUPPORTED_YEAR,
+    CollectionSummary,
+    financials_out_dir,
+)
+from research_backtest.core.dart.financial_api import (
+    collect_financials as run_collect_financials,
+)
+from research_backtest.core.dart.models import DartFiling, ResolveMethod, ResolveResult
 from research_backtest.core.exceptions import ConfigError, DartApiError, DartTransportError
 from research_backtest.core.models import DartCorporation
 
@@ -96,11 +110,7 @@ def resolve_company(
                 refresh_days=dart_config.corp_code_cache.refresh_days,
                 force=refresh_corp_codes,
             )
-            result = registry.resolve(company)
-            if result.matched is None:
-                _print_resolve_failure(company, result)
-                raise typer.Exit(code=RESOLVE_FAILURE_EXIT_CODE)
-            corp = result.matched
+            corp, method = _resolve_or_exit(registry, company)
             filings = find_periodic_filings(
                 client, corp.corp_code, as_of_date=as_of, lookback_years=2
             )
@@ -108,10 +118,25 @@ def resolve_company(
         console.print(f"[red]DART 호출 실패: {err}[/red]")
         raise typer.Exit(code=RESOLVE_FAILURE_EXIT_CODE) from err
 
-    _print_company(corp, result.method)
+    _print_company(corp, method)
     annual = latest_filing(filings, PeriodicReportType.ANNUAL)
     interim = _latest_interim(filings)
     _print_filings(annual, interim)
+
+
+def _resolve_or_exit(
+    registry: CorpCodeRegistry, company: str
+) -> tuple[DartCorporation, ResolveMethod]:
+    """기업 식별 성공 시 (기업, 매칭 방법)을 반환하고, 실패 시 후보 출력 후 exit 1.
+
+    resolve-company·collect-financials가 공유하는 규칙이다(명세 A2 §0, §5) —
+    AMBIGUOUS는 후보 테이블, NOT_FOUND는 안내 메시지를 출력한다.
+    """
+    result = registry.resolve(company)
+    if result.matched is None:
+        _print_resolve_failure(company, result)
+        raise typer.Exit(code=RESOLVE_FAILURE_EXIT_CODE)
+    return result.matched, result.method
 
 
 def _latest_interim(filings: Sequence[DartFiling]) -> DartFiling | None:
@@ -162,17 +187,135 @@ def _print_resolve_failure(query: str, result: ResolveResult) -> None:
 @app.command("collect-financials")
 def collect_financials(
     company: Annotated[str, typer.Option("--company", help="기업명 또는 6자리 종목코드")],
-    from_year: Annotated[int, typer.Option("--from-year", help="수집 시작 사업연도")],
+    from_year: Annotated[
+        int, typer.Option("--from-year", help=f"수집 시작 사업연도 ({MIN_SUPPORTED_YEAR} 이상)")
+    ],
     to_year: Annotated[int, typer.Option("--to-year", help="수집 종료 사업연도")],
     scopes: Annotated[
-        list[str] | None, typer.Option("--scopes", help="재무제표 구분 (CFS/OFS)")
+        list[str] | None,
+        typer.Option("--scopes", help="재무제표 구분 (CFS/OFS, 반복 지정 가능 — 기본 둘 다)"),
     ] = None,
+    force_download: Annotated[
+        bool, typer.Option("--force-download", help="캐시를 무시하고 재수집 (README §8.3)")
+    ] = False,
     include_xbrl: Annotated[
-        bool, typer.Option("--include-xbrl", help="XBRL 원본 ZIP 함께 수집")
+        bool, typer.Option("--include-xbrl", help="XBRL 원본 ZIP 함께 수집 (Milestone B1)")
     ] = False,
 ) -> None:
-    """DART 전체 재무제표 API로 재무 데이터를 수집한다."""
-    _not_implemented("Milestone A2 (XBRL은 B1)")
+    """DART 전체 재무제표 API로 연도별 CFS·OFS raw를 수집한다 (README §19.3, §31 M2).
+
+    캐시된 요청은 재호출하지 않으며(멱등), 미제출 보고서(013)는 NO_DATA로
+    기록된다 — 실패가 아니다. 종료 코드: 0 성공 / 1 식별 실패·DART 오류 /
+    3 설정 오류.
+    """
+    if from_year > to_year:
+        raise typer.BadParameter(
+            f"--from-year({from_year})는 --to-year({to_year})보다 클 수 없습니다."
+        )
+    if from_year < MIN_SUPPORTED_YEAR:
+        raise typer.BadParameter(
+            f"전체 재무제표 API는 {MIN_SUPPORTED_YEAR}년 이후 사업연도만 제공합니다 (README §6.4)."
+        )
+    fs_divs = _parse_scopes(scopes)
+    if include_xbrl:
+        console.print(
+            "[yellow]XBRL 수집은 Milestone B1에서 구현됩니다 — 이번 실행에서는 무시[/yellow]"
+        )
+
+    try:
+        settings = get_settings()
+        api_key = settings.require_dart_api_key()
+        dart_config = load_dart_config()
+    except ConfigError as err:
+        console.print(f"[red]설정 오류: {err}[/red]")
+        raise typer.Exit(code=CONFIG_ERROR_EXIT_CODE) from err
+
+    try:
+        with DartClient(
+            api_key,
+            timeout=dart_config.timeout_seconds,
+            max_attempts=dart_config.retry.max_attempts,
+            backoff_seconds=dart_config.retry.backoff_seconds,
+        ) as client:
+            registry = load_corp_code_registry(
+                client,
+                corp_code_cache_dir(settings.data_dir),
+                refresh_days=dart_config.corp_code_cache.refresh_days,
+            )
+            corp, _method = _resolve_or_exit(registry, company)
+            out_dir = financials_out_dir(settings.data_dir, corp.corp_code)
+            summary = run_collect_financials(
+                client,
+                corp.corp_code,
+                from_year=from_year,
+                to_year=to_year,
+                fs_divs=fs_divs,
+                out_dir=out_dir,
+                force=force_download,
+                min_interval_seconds=dart_config.min_interval_seconds,
+            )
+    except (DartApiError, DartTransportError) as err:
+        console.print(f"[red]DART 호출 실패: {err}[/red]")
+        raise typer.Exit(code=RESOLVE_FAILURE_EXIT_CODE) from err
+
+    _print_collection(corp, summary, out_dir)
+
+
+_REPRT_LABELS: dict[ReprtCode, str] = {
+    ReprtCode.Q1: "1분기보고서",
+    ReprtCode.HALF: "반기보고서",
+    ReprtCode.Q3: "3분기보고서",
+    ReprtCode.ANNUAL: "사업보고서",
+}
+
+
+def _parse_scopes(scopes: list[str] | None) -> tuple[FsDiv, ...]:
+    """--scopes 값을 검증·중복 제거한다 — CFS/OFS 외 값은 BadParameter (명세 A2 §5)."""
+    if not scopes:
+        return (FsDiv.CFS, FsDiv.OFS)
+    parsed: dict[FsDiv, None] = {}
+    for raw in scopes:
+        try:
+            parsed[FsDiv(raw.strip().upper())] = None
+        except ValueError as err:
+            raise typer.BadParameter(f"--scopes는 CFS/OFS만 허용합니다: {raw!r}") from err
+    return tuple(parsed)
+
+
+def _format_sj_div_counts(counts: dict[str, int]) -> str:
+    """sj_div별 행수 요약 — BS·IS·CIS·CF·SCE 순서, 없는 종류는 생략."""
+    if not counts:
+        return "-"
+    known = [statement.value for statement in StatementType]
+    ordered = [key for key in known if key in counts] + [k for k in counts if k not in known]
+    return " ".join(f"{key}:{counts[key]}" for key in ordered)
+
+
+def _count_jsonl_lines(path: Path) -> int:
+    if not path.exists():
+        return 0
+    with path.open(encoding="utf-8") as fp:
+        return sum(1 for line in fp if line.strip())
+
+
+def _print_collection(corp: DartCorporation, summary: CollectionSummary, out_dir: Path) -> None:
+    """수집 결과 테이블 + 저장 경로·jsonl 라인 수 출력 (명세 A2 §5)."""
+    table = Table(title=f"전체 재무제표 수집 결과 — {corp.corp_name} ({summary.corp_code})")
+    for column in ("연도", "보고서", "scope", "결과", "행수", "sj_div별 행수"):
+        table.add_column(column)
+    for outcome in summary.outcomes:
+        table.add_row(
+            outcome.bsns_year,
+            f"{_REPRT_LABELS[outcome.reprt_code]}({outcome.reprt_code.value})",
+            outcome.fs_div.value,
+            outcome.result,
+            str(outcome.row_count),
+            _format_sj_div_counts(outcome.sj_div_counts),
+        )
+    console.print(table)
+    line_count = _count_jsonl_lines(out_dir / JSONL_FILENAME)
+    console.print(f"저장 경로: {out_dir}")
+    console.print(f"병합본 {JSONL_FILENAME}: {line_count}라인")
 
 
 @app.command("parse-xbrl")

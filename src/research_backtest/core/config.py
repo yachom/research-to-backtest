@@ -60,9 +60,14 @@ class DartCorpCodeCacheConfig(BaseModel):
 
 
 class DartConfig(BaseModel):
-    """configs/dart.yaml의 요청·캐시 설정 (README §6, §27)."""
+    """configs/dart.yaml의 요청·캐시 설정 (README §6, §27).
+
+    min_interval_seconds는 수집기의 **실제 API 호출 사이** 최소 대기
+    간격이다 — 캐시 히트는 대기하지 않는다(명세 A2 §4).
+    """
 
     timeout_seconds: float = Field(default=30.0, gt=0)
+    min_interval_seconds: float = Field(default=0.1, ge=0)
     retry: DartRetryConfig = Field(default_factory=DartRetryConfig)
     corp_code_cache: DartCorpCodeCacheConfig = Field(default_factory=DartCorpCodeCacheConfig)
 
@@ -84,6 +89,7 @@ def load_dart_config(path: Path = Path("configs/dart.yaml")) -> DartConfig:
         return DartConfig.model_validate(
             {
                 "timeout_seconds": request.get("timeout_seconds", 30.0),
+                "min_interval_seconds": request.get("min_interval_seconds", 0.1),
                 "retry": request.get("retry") or {},
                 "corp_code_cache": raw.get("corp_code_cache") or {},
             }

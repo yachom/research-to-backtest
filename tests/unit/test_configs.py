@@ -4,6 +4,8 @@ from pathlib import Path
 
 import yaml
 
+from research_backtest.core.config import load_dart_config
+
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
 
 VALID_STATEMENT_TYPES = {"BS", "IS", "CIS", "CF", "SCE"}
@@ -45,3 +47,10 @@ def test_other_configs_parse_as_mappings() -> None:
     for name in ["dart.yaml", "backtest.yaml"]:
         data = yaml.safe_load((CONFIG_DIR / name).read_text(encoding="utf-8"))
         assert isinstance(data, dict), name
+
+
+def test_dart_yaml_loads_into_dart_config_with_min_interval() -> None:
+    # request.min_interval_seconds는 A2에서 신설 (명세 A2 §4)
+    config = load_dart_config(CONFIG_DIR / "dart.yaml")
+    assert config.min_interval_seconds == 0.1
+    assert config.timeout_seconds == 30.0

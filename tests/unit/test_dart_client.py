@@ -169,6 +169,33 @@ def test_network_timeout_is_retried_then_raises_transport_error(
     assert calls == 5
 
 
+def test_get_json_text_returns_payload_and_raw_body(make_dart_client: ClientFactory) -> None:
+    body = '{"status": "000", "message": "정상", "list": [{"account_nm": "자산총계"}]}'
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=body.encode("utf-8"), headers={"Content-Type": "application/json"}
+        )
+
+    with make_dart_client(handler) as client:
+        payload, text = client.get_json_text("fnlttSinglAcntAll.json")
+
+    assert payload["status"] == "000"
+    assert text == body  # 원문 텍스트 그대로 — 재직렬화 없음 (명세 A2 §3.1)
+
+
+def test_get_json_text_raises_on_error_status_like_get_json(
+    make_dart_client: ClientFactory,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status": "013", "message": "조회된 데이타가 없습니다."})
+
+    with make_dart_client(handler) as client, pytest.raises(DartApiError) as excinfo:
+        client.get_json_text("fnlttSinglAcntAll.json")
+
+    assert excinfo.value.is_no_data
+
+
 def test_get_bytes_returns_zip_payload(make_dart_client: ClientFactory) -> None:
     zip_bytes = b"PK\x03\x04" + b"\x00" * 16
 
