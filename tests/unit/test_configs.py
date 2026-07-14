@@ -1,10 +1,11 @@
 """configs/ YAML 파일 정합성 스모크 테스트."""
 
+from datetime import date
 from pathlib import Path
 
 import yaml
 
-from research_backtest.core.config import load_dart_config
+from research_backtest.core.config import load_dart_config, load_market_config
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
 
@@ -44,7 +45,7 @@ def test_account_registry_covers_milestone5_targets() -> None:
 
 
 def test_other_configs_parse_as_mappings() -> None:
-    for name in ["dart.yaml", "backtest.yaml"]:
+    for name in ["dart.yaml", "backtest.yaml", "market.yaml"]:
         data = yaml.safe_load((CONFIG_DIR / name).read_text(encoding="utf-8"))
         assert isinstance(data, dict), name
 
@@ -54,3 +55,12 @@ def test_dart_yaml_loads_into_dart_config_with_min_interval() -> None:
     config = load_dart_config(CONFIG_DIR / "dart.yaml")
     assert config.min_interval_seconds == 0.1
     assert config.timeout_seconds == 30.0
+
+
+def test_market_yaml_loads_into_market_config() -> None:
+    # configs/market.yaml은 A3에서 신설 (명세 A3 §5)
+    config = load_market_config(CONFIG_DIR / "market.yaml")
+    assert config.source == "pykrx"
+    assert config.min_interval_seconds == 0.3
+    assert config.default_start_date == date(2015, 1, 1)
+    assert config.default_index_code == "1001"

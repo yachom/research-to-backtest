@@ -1,5 +1,6 @@
 """환경변수·설정 파일 기반 설정 (README §30, §6, §27)."""
 
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,11 @@ class Settings(BaseSettings):
     )
 
     dart_api_key: str = ""
+
+    # KRX 정보데이터시스템 로그인 (docs/MILESTONES.md D1 개정, 명세 A3 §0·§5).
+    # 미설정이면 투자자 수급·지수는 건너뛰는 부분 수집 모드로 동작한다.
+    krx_id: str = ""
+    krx_pw: str = ""
 
     # LLM은 OpenRouter 경유 무료 모델 사용 (docs/MILESTONES.md D2). Phase C에서만 필요.
     openrouter_api_key: str = ""
@@ -96,3 +102,46 @@ def load_dart_config(path: Path = Path("configs/dart.yaml")) -> DartConfig:
         )
     except ValidationError as err:
         raise ConfigError(f"DART 설정 값이 잘못되었습니다: {err}") from err
+
+
+class MarketConfig(BaseModel):
+    """configs/market.yaml의 시장 데이터 수집 설정 (docs/MILESTONES.md D1, 명세 A3 §5).
+
+    min_interval_seconds는 수집기의 **실제 소스 호출 사이** 최소 대기
+    간격이다 — 캐시 히트는 대기하지 않는다(명세 A3 §3.2).
+    default_start_date는 전체 재무제표 API 제공 범위(2015~, README §6.4)와
+    정렬된 수집 기본 시작일, default_index_code는 벤치마크 지수(KOSPI=1001)다.
+    """
+
+    source: str = "pykrx"
+    min_interval_seconds: float = Field(default=0.3, ge=0)
+    default_start_date: date = date(2015, 1, 1)
+    default_index_code: str = "1001"
+
+
+def load_market_config(path: Path = Path("configs/market.yaml")) -> MarketConfig:
+    """configs/market.yaml을 읽어 MarketConfig로 검증한다 (load_dart_config 패턴)."""
+    if not path.exists():
+        raise ConfigError(
+            f"시장 데이터 설정 파일이 없습니다: {path} (레포 루트에서 실행했는지 확인)"
+        )
+    raw: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ConfigError(f"시장 데이터 설정 파일 형식이 잘못되었습니다(매핑이 아님): {path}")
+    request: Any = raw.get("request") or {}
+    if not isinstance(request, dict):
+        raise ConfigError(f"시장 데이터 설정의 request 항목이 매핑이 아닙니다: {path}")
+    defaults: Any = raw.get("defaults") or {}
+    if not isinstance(defaults, dict):
+        raise ConfigError(f"시장 데이터 설정의 defaults 항목이 매핑이 아닙니다: {path}")
+    try:
+        return MarketConfig.model_validate(
+            {
+                "source": raw.get("source", "pykrx"),
+                "min_interval_seconds": request.get("min_interval_seconds", 0.3),
+                "default_start_date": defaults.get("start_date", "2015-01-01"),
+                "default_index_code": defaults.get("index_code", "1001"),
+            }
+        )
+    except ValidationError as err:
+        raise ConfigError(f"시장 데이터 설정 값이 잘못되었습니다: {err}") from err

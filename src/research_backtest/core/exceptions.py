@@ -43,5 +43,22 @@ class DataValidationError(ResearchBacktestError):
     """수집·정규화 데이터가 검증 규칙(README §16)을 통과하지 못한 경우."""
 
 
+class MarketAuthError(ResearchBacktestError):
+    """KRX 로그인 자격증명(KRX_ID/KRX_PW)이 없어 수집할 수 없는 데이터셋 (MILESTONES D1 개정).
+
+    KRX가 2025년부터 데이터 조회에 로그인을 의무화해 투자자 수급·지수는
+    자격증명 없이는 수집이 불가능하다. 미로그인 실패가 "빈 DataFrame"으로
+    나타나므로 호출 전에 이 예외로 차단한다(명세 A3 §0, §2).
+    """
+
+
+class CalendarRangeError(ResearchBacktestError):
+    """거래일 캘린더 coverage 밖 날짜 조회 (명세 A3 §4).
+
+    주말 로직 등으로 조용히 대체하면 룩어헤드·오정렬(README §4, §22)의
+    원인이 되므로 즉시 실패한다.
+    """
+
+
 class LookaheadError(ResearchBacktestError):
     """Point-in-Time 원칙(README §4, §22) 위반: 기준일 이후 정보가 사용된 경우."""

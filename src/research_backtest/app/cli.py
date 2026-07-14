@@ -5,7 +5,7 @@ resolve-company(A1)·collect-financials(A2)는 구현되었다. 나머지 명령
 """
 
 from collections.abc import Sequence
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 from zoneinfo import ZoneInfo
@@ -15,7 +15,12 @@ from rich.console import Console
 from rich.table import Table
 
 from research_backtest import __version__
-from research_backtest.core.config import get_settings, load_dart_config
+from research_backtest.core.config import (
+    Settings,
+    get_settings,
+    load_dart_config,
+    load_market_config,
+)
 from research_backtest.core.constants import FsDiv, PeriodicReportType, ReprtCode, StatementType
 from research_backtest.core.dart.client import DartClient
 from research_backtest.core.dart.corp_code import (
@@ -34,7 +39,24 @@ from research_backtest.core.dart.financial_api import (
     collect_financials as run_collect_financials,
 )
 from research_backtest.core.dart.models import DartFiling, ResolveMethod, ResolveResult
-from research_backtest.core.exceptions import ConfigError, DartApiError, DartTransportError
+from research_backtest.core.exceptions import (
+    ConfigError,
+    DartApiError,
+    DartTransportError,
+    DataValidationError,
+    MarketAuthError,
+)
+from research_backtest.core.market.collector import (
+    MarketCollectionSummary,
+    market_calendar_path,
+    market_normalized_stock_dir,
+    market_raw_index_dir,
+    market_raw_stock_dir,
+)
+from research_backtest.core.market.collector import (
+    collect_market_data as run_collect_market_data,
+)
+from research_backtest.core.market.source import PykrxSource
 from research_backtest.core.models import DartCorporation
 
 app = typer.Typer(
@@ -316,6 +338,184 @@ def _print_collection(corp: DartCorporation, summary: CollectionSummary, out_dir
     line_count = _count_jsonl_lines(out_dir / JSONL_FILENAME)
     console.print(f"저장 경로: {out_dir}")
     console.print(f"병합본 {JSONL_FILENAME}: {line_count}라인")
+
+
+@app.command("collect-market")
+def collect_market(
+    company: Annotated[
+        str | None,
+        typer.Option("--company", help="기업명 또는 6자리 종목코드 (DART로 식별, 키 필요)"),
+    ] = None,
+    stock_code: Annotated[
+        str | None,
+        typer.Option("--stock-code", help="6자리 종목코드 (DART 없이 동작)"),
+    ] = None,
+    from_date: Annotated[
+        str | None,
+        typer.Option("--from-date", help="수집 시작일 YYYY-MM-DD (기본: configs/market.yaml)"),
+    ] = None,
+    to_date: Annotated[
+        str | None,
+        typer.Option("--to-date", help="수집 종료일 YYYY-MM-DD (기본: KST 어제)"),
+    ] = None,
+    index: Annotated[
+        str | None,
+        typer.Option("--index", help="벤치마크 지수 코드 (기본: configs/market.yaml — KOSPI 1001)"),
+    ] = None,
+    force_download: Annotated[
+        bool, typer.Option("--force-download", help="캐시를 무시하고 재수집 (README §8.3)")
+    ] = False,
+) -> None:
+    """pykrx로 수정주가 OHLCV·투자자 수급·지수·거래일 캘린더를 수집한다 (명세 A3, MILESTONES D1).
+
+    수집 종료일 기본값은 **KST 오늘-1일**이다 — 장중 실행 시 미완성 일봉이
+    저장·캐시되는 것을 막는다(명세 A3 §6). KRX 자격증명(KRX_ID/KRX_PW)이
+    없으면 가격(OHLCV)만 수집하는 부분 수집 모드로 동작하며 exit 0이다.
+    종료 코드: 0 성공(부분 수집 포함) / 1 소스·검증 오류 / 3 설정 오류.
+    """
+    if (company is None) == (stock_code is None):
+        raise typer.BadParameter(
+            "--company와 --stock-code 중 정확히 하나만 지정하세요 (명세 A3 §6)."
+        )
+
+    try:
+        settings = get_settings()
+        market_config = load_market_config()
+    except ConfigError as err:
+        console.print(f"[red]설정 오류: {err}[/red]")
+        raise typer.Exit(code=CONFIG_ERROR_EXIT_CODE) from err
+
+    start = _parse_iso_date_option(from_date, "--from-date") or market_config.default_start_date
+    end = _parse_iso_date_option(to_date, "--to-date") or (
+        datetime.now(KST).date() - timedelta(days=1)
+    )
+    if start > end:
+        raise typer.BadParameter(f"--from-date({start})는 --to-date({end})보다 클 수 없습니다.")
+    index_code = index or market_config.default_index_code
+
+    if stock_code is not None:
+        code = stock_code.strip()
+        if len(code) != 6 or not code.isdigit():
+            raise typer.BadParameter(f"--stock-code는 6자리 숫자여야 합니다: {stock_code!r}")
+        display_name = code
+    else:
+        code, display_name = _resolve_listed_stock_code(company or "", settings)
+
+    source = PykrxSource(krx_id=settings.krx_id, krx_pw=settings.krx_pw)
+    try:
+        summary = run_collect_market_data(
+            source,
+            stock_code=code,
+            index_code=index_code,
+            from_date=start,
+            to_date=end,
+            data_dir=settings.data_dir,
+            force=force_download,
+            min_interval_seconds=market_config.min_interval_seconds,
+        )
+    except (DataValidationError, MarketAuthError) as err:
+        console.print(f"[red]시장 데이터 수집 실패: {err}[/red]")
+        raise typer.Exit(code=RESOLVE_FAILURE_EXIT_CODE) from err
+
+    _print_market_collection(summary, display_name, settings.data_dir, start, end)
+
+
+def _parse_iso_date_option(value: str | None, option: str) -> date | None:
+    """YYYY-MM-DD 옵션 파싱 — 형식 오류는 BadParameter, 미지정(None)은 그대로."""
+    if value is None:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError as err:
+        raise typer.BadParameter(f"{option}는 YYYY-MM-DD 형식이어야 합니다: {value!r}") from err
+
+
+def _resolve_listed_stock_code(company: str, settings: Settings) -> tuple[str, str]:
+    """--company를 DART 고유번호 파일로 식별해 (종목코드, 기업명)을 반환한다 (명세 A3 §6).
+
+    _resolve_or_exit 재사용 — DART 키 필요(미설정이면 exit 3). 비상장
+    법인은 시장 데이터가 없으므로 exit 1.
+    """
+    try:
+        api_key = settings.require_dart_api_key()
+        dart_config = load_dart_config()
+    except ConfigError as err:
+        console.print(f"[red]설정 오류: {err}[/red]")
+        raise typer.Exit(code=CONFIG_ERROR_EXIT_CODE) from err
+    try:
+        with DartClient(
+            api_key,
+            timeout=dart_config.timeout_seconds,
+            max_attempts=dart_config.retry.max_attempts,
+            backoff_seconds=dart_config.retry.backoff_seconds,
+        ) as client:
+            registry = load_corp_code_registry(
+                client,
+                corp_code_cache_dir(settings.data_dir),
+                refresh_days=dart_config.corp_code_cache.refresh_days,
+            )
+            corp, _method = _resolve_or_exit(registry, company)
+    except (DartApiError, DartTransportError) as err:
+        console.print(f"[red]DART 호출 실패: {err}[/red]")
+        raise typer.Exit(code=RESOLVE_FAILURE_EXIT_CODE) from err
+    if not corp.stock_code:
+        console.print(
+            f"[red]'{corp.corp_name}'은(는) 비상장 법인입니다 — "
+            "시장 데이터를 수집할 수 없습니다.[/red]"
+        )
+        raise typer.Exit(code=RESOLVE_FAILURE_EXIT_CODE)
+    return corp.stock_code, corp.corp_name
+
+
+_DATASET_LABELS: dict[str, str] = {
+    "OHLCV": "수정주가 OHLCV",
+    "INVESTOR_VALUE": "투자자 순매수",
+    "INDEX": "지수 OHLCV",
+    "CALENDAR": "거래일 캘린더",
+    "DAILY_MERGED": "일별 병합본",
+}
+
+
+def _print_market_collection(
+    summary: MarketCollectionSummary,
+    display_name: str,
+    data_dir: Path,
+    start: date,
+    end: date,
+) -> None:
+    """수집 결과 테이블 + 저장 경로 + 부분 수집 경고 출력 (명세 A3 §6)."""
+    table = Table(
+        title=(
+            f"시장 데이터 수집 결과 — {display_name} ({summary.stock_code}) / "
+            f"지수 {summary.index_code} / 요청 {start}~{end}"
+        )
+    )
+    for column in ("데이터셋", "결과", "행수", "기간"):
+        table.add_column(column)
+    for outcome in summary.outcomes:
+        period = (
+            f"{outcome.date_min}~{outcome.date_max}"
+            if outcome.date_min is not None and outcome.date_max is not None
+            else "-"
+        )
+        table.add_row(
+            f"{_DATASET_LABELS.get(outcome.dataset, outcome.dataset)}({outcome.dataset})",
+            outcome.result,
+            str(outcome.row_count),
+            period,
+        )
+    console.print(table)
+    console.print(f"raw 저장 경로: {market_raw_stock_dir(data_dir, summary.stock_code)}")
+    console.print(f"지수 raw 저장 경로: {market_raw_index_dir(data_dir, summary.index_code)}")
+    console.print(
+        f"normalized 저장 경로: {market_normalized_stock_dir(data_dir, summary.stock_code)}"
+    )
+    console.print(f"거래일 캘린더 경로: {market_calendar_path(data_dir)}")
+    if summary.has_skipped_no_auth():
+        console.print(
+            "[yellow]투자자 수급·지수는 KRX 로그인 필요 — .env에 KRX_ID/KRX_PW 설정 후 "
+            "재실행하면 가격 캐시는 유지된 채 나머지만 수집된다.[/yellow]"
+        )
 
 
 @app.command("parse-xbrl")

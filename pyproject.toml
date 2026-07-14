@@ -15,6 +15,9 @@ dependencies = [
     "typer>=0.12",
     "rich>=13.7",
     "PyYAML>=6.0",
+    "pykrx>=1.0.45",
+    "pandas>=2.2",
+    "pyarrow>=17",
 ]
 
 [project.optional-dependencies]
@@ -24,6 +27,7 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "types-PyYAML",
+    "pandas-stubs",
 ]
 
 [project.scripts]
@@ -44,6 +48,11 @@ python_version = "3.12"
 strict = true
 files = ["src", "tests"]
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# pykrx는 타입 스텁이 없다 — 타입 경계는 core/market의 어댑터에서 명시한다
+module = ["pykrx.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
