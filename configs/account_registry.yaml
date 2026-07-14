@@ -1,0 +1,140 @@
+# 표준계정 Registry (README §12.2)
+#
+# Milestone 5(B3) 완료 조건인 11개 자동 매핑 대상 계정의 초안이다.
+# accepted_concepts의 XBRL 표준계정 ID는 실제 공시 데이터로 검증하기 전의
+# 초안이며, A4·B3에서 SK하이닉스 실데이터 기준으로 검증·확장한다.
+
+revenue:
+  korean_name: 매출액
+  english_name: Revenue
+  statement_type: IS
+  balance_type: credit
+  period_type: duration
+  accepted_concepts:
+    - ifrs-full:Revenue
+  accepted_labels:
+    - 매출액
+    - 수익(매출액)
+    - 영업수익
+    - 매출
+
+operating_income:
+  korean_name: 영업이익
+  english_name: OperatingIncome
+  statement_type: IS
+  balance_type: credit
+  period_type: duration
+  accepted_concepts:
+    - dart:OperatingIncomeLoss
+  accepted_labels:
+    - 영업이익
+    - 영업이익(손실)
+    - 영업손익
+
+net_income:
+  korean_name: 당기순이익
+  english_name: NetIncome
+  statement_type: IS
+  balance_type: credit
+  period_type: duration
+  accepted_concepts:
+    - ifrs-full:ProfitLoss
+  accepted_labels:
+    - 당기순이익
+    - 당기순이익(손실)
+    - 분기순이익
+    - 분기순이익(손실)
+    - 반기순이익
+    - 반기순이익(손실)
+
+total_assets:
+  korean_name: 자산총계
+  english_name: TotalAssets
+  statement_type: BS
+  balance_type: debit
+  period_type: instant
+  accepted_concepts:
+    - ifrs-full:Assets
+  accepted_labels:
+    - 자산총계
+
+total_liabilities:
+  korean_name: 부채총계
+  english_name: TotalLiabilities
+  statement_type: BS
+  balance_type: credit
+  period_type: instant
+  accepted_concepts:
+    - ifrs-full:Liabilities
+  accepted_labels:
+    - 부채총계
+
+total_equity:
+  korean_name: 자본총계
+  english_name: TotalEquity
+  statement_type: BS
+  balance_type: credit
+  period_type: instant
+  accepted_concepts:
+    - ifrs-full:Equity
+  accepted_labels:
+    - 자본총계
+
+cash_and_cash_equivalents:
+  korean_name: 현금및현금성자산
+  english_name: CashAndCashEquivalents
+  statement_type: BS
+  balance_type: debit
+  period_type: instant
+  accepted_concepts:
+    - ifrs-full:CashAndCashEquivalents
+  accepted_labels:
+    - 현금및현금성자산
+
+operating_cash_flow:
+  korean_name: 영업활동현금흐름
+  english_name: OperatingCashFlow
+  statement_type: CF
+  period_type: duration
+  accepted_concepts:
+    - ifrs-full:CashFlowsFromUsedInOperatingActivities
+  accepted_labels:
+    - 영업활동현금흐름
+    - 영업활동으로 인한 현금흐름
+    - 영업활동 현금흐름
+
+purchase_of_ppe:
+  korean_name: 유형자산의 취득
+  english_name: PurchaseOfPropertyPlantAndEquipment
+  statement_type: CF
+  period_type: duration
+  accepted_concepts:
+    - ifrs-full:PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities
+  accepted_labels:
+    - 유형자산의 취득
+    - 유형자산의취득
+    - 유형자산 취득
+
+inventories:
+  korean_name: 재고자산
+  english_name: Inventories
+  statement_type: BS
+  balance_type: debit
+  period_type: instant
+  accepted_concepts:
+    - ifrs-full:Inventories
+  accepted_labels:
+    - 재고자산
+
+trade_receivables:
+  korean_name: 매출채권
+  english_name: TradeReceivables
+  statement_type: BS
+  balance_type: debit
+  period_type: instant
+  accepted_concepts:
+    - ifrs-full:TradeAndOtherCurrentReceivables
+  accepted_labels:
+    - 매출채권
+    - 매출채권및기타채권
+    - 매출채권 및 기타유동채권

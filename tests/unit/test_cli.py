@@ -1,0 +1,38 @@
+"""CLI 골격(README §26) 스모크 테스트."""
+
+from typer.testing import CliRunner
+
+from research_backtest import __version__
+from research_backtest.app.cli import NOT_IMPLEMENTED_EXIT_CODE, app
+
+runner = CliRunner()
+
+ALL_COMMANDS = [
+    "resolve-company",
+    "collect-financials",
+    "parse-xbrl",
+    "reconcile-financials",
+    "research",
+    "backtest",
+]
+
+
+def test_help_lists_all_spec_commands() -> None:
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    for cmd in ALL_COMMANDS:
+        assert cmd in result.output
+
+
+def test_version_command() -> None:
+    result = runner.invoke(app, ["version"])
+    assert result.exit_code == 0
+    assert __version__ in result.output
+
+
+def test_stub_command_exits_with_not_implemented() -> None:
+    result = runner.invoke(
+        app,
+        ["reconcile-financials", "--company", "SK하이닉스", "--year", "2024", "--report", "annual"],
+    )
+    assert result.exit_code == NOT_IMPLEMENTED_EXIT_CODE

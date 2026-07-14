@@ -1,0 +1,47 @@
+"""configs/ YAML 파일 정합성 스모크 테스트."""
+
+from pathlib import Path
+
+import yaml
+
+CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
+
+VALID_STATEMENT_TYPES = {"BS", "IS", "CIS", "CF", "SCE"}
+VALID_PERIOD_TYPES = {"instant", "duration"}
+
+
+def test_account_registry_entries_have_required_keys() -> None:
+    registry = yaml.safe_load((CONFIG_DIR / "account_registry.yaml").read_text(encoding="utf-8"))
+    assert registry, "레지스트리가 비어 있다"
+    required = {"korean_name", "statement_type", "period_type", "accepted_labels"}
+    for canonical_id, entry in registry.items():
+        missing = required - entry.keys()
+        assert not missing, f"{canonical_id}에 필수 키 누락: {missing}"
+        assert entry["statement_type"] in VALID_STATEMENT_TYPES, canonical_id
+        assert entry["period_type"] in VALID_PERIOD_TYPES, canonical_id
+        assert entry["accepted_labels"], canonical_id
+
+
+def test_account_registry_covers_milestone5_targets() -> None:
+    # README §31 Milestone 5 완료 조건의 11개 계정
+    registry = yaml.safe_load((CONFIG_DIR / "account_registry.yaml").read_text(encoding="utf-8"))
+    expected = {
+        "revenue",
+        "operating_income",
+        "net_income",
+        "total_assets",
+        "total_liabilities",
+        "total_equity",
+        "cash_and_cash_equivalents",
+        "operating_cash_flow",
+        "purchase_of_ppe",
+        "inventories",
+        "trade_receivables",
+    }
+    assert expected <= registry.keys()
+
+
+def test_other_configs_parse_as_mappings() -> None:
+    for name in ["dart.yaml", "backtest.yaml"]:
+        data = yaml.safe_load((CONFIG_DIR / name).read_text(encoding="utf-8"))
+        assert isinstance(data, dict), name

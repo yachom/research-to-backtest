@@ -1,0 +1,13 @@
+# OpenDART API 설정 (README §6, §27)
+base_url: https://opendart.fss.or.kr/api
+
+request:
+  timeout_seconds: 30
+  # 재시도 정책 (README §27.3)
+  retry:
+    max_attempts: 4
+    backoff_seconds: [1, 2, 4, 8]
+
+corp_code_cache:
+  # 고유번호 파일 캐시 갱신 주기 (README §6.1)
+  refresh_days: 7
