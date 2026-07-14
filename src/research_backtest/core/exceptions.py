@@ -43,6 +43,14 @@ class DataValidationError(ResearchBacktestError):
     """수집·정규화 데이터가 검증 규칙(README §16)을 통과하지 못한 경우."""
 
 
+class StrategyValidationError(ResearchBacktestError):
+    """전략 DSL이 스키마·지표 레지스트리 검증(README §21, §31 M8)을 통과하지 못한 경우."""
+
+
+class XbrlParseError(ResearchBacktestError):
+    """XBRL 원본 파싱 실패 (README §9, §19.5)."""
+
+
 class MarketAuthError(ResearchBacktestError):
     """KRX 로그인 자격증명(KRX_ID/KRX_PW)이 없어 수집할 수 없는 데이터셋 (MILESTONES D1 개정).
 
