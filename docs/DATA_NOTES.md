@@ -50,6 +50,24 @@
    영향받지 않는다. coverage 밖 조회는 CalendarRangeError로 즉시 실패
    (주말 로직 대체 금지 — 룩어헤드 방지).
 
+## B1+B2 XBRL 실측 (2026-07-14, SK하이닉스 2021~2025 정기보고서 22건)
+
+1. **ZIP 구성**: instance **1개**(`entity{corp_code}_{결산일}.xbrl`) + `.xsd` + 링크베이스
+   5종(`_cal`·`_def`·`_pre`·`_lab-ko`·`_lab-en`). 파일명에 결산일이 들어가 비고정 →
+   루트 태그 `{xbrli}xbrl`로 판별(파일명 가정 금지 원칙 유효).
+2. **연결·별도는 파일로 분리되지 않는다** — 단일 instance 안에서
+   `ConsolidatedAndSeparateFinancialStatementsAxis`(Consolidated/SeparateMember)
+   **차원**으로 구분된다. ⇒ **README §10.1의 "추가 Dimension이 없는 기본 Context"
+   규칙은 실데이터에 존재하지 않는다**(차원 0 context는 1개뿐, Assets 아님).
+   B3의 Context 선택 규칙은 "연결/별도 축 **하나만** 있는 context에서 scope에 맞는
+   member 선택"으로 수정해야 한다.
+3. entity identifier scheme=`http://dart.fss.or.kr/ifrs/CIK`, 값=corp_code.
+   차원은 전부 segment(scenario 미사용). nil fact 0건, decimals에 `INF` 존재.
+4. 규모: 사업보고서당 fact 7,000~8,000(ifrs-full 5,000~6,300 + 기업 확장
+   entity00164779 ~1,000 + dart ~600~830 + dart-gcd 114), context ~2,400~2,900.
+5. **2020.12 사업보고서는 원본(20210322000782)과 [기재정정](20210330000776) 두
+   접수번호가 모두 수집됨** — B4 정정공시 버전 그래프의 실데이터 케이스.
+
 ## 기업 식별(A1) 관찰
 
 - 축약 검색어가 동명의 비상장사에 정확 일치할 수 있다 — 예: "삼성" →
