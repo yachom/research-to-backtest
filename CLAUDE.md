@@ -42,7 +42,8 @@ set -a && source .env && set +a && DATA_DIR=$PWD/data .venv/bin/python -m pytest
 
 ## 4. 환경·키 현황 (2026-07-15 기준)
 
-- `.env`에 **DART_API_KEY·KRX_ID/KRX_PW 있음**. **OPENROUTER_API_KEY 없음** — LLM 예정 모델 `inclusionai/ling-2.6-flash:free`(D2), Phase C의 live 호출만 차단됨(구조는 fake 클라이언트로 구현).
+- `.env`에 **DART_API_KEY·KRX_ID/KRX_PW 있음**.
+- **LLM(D2 재개정)**: Claude Agent SDK + 별도 구독 계정의 `CLAUDE_CODE_OAUTH_TOKEN`(사용자가 `claude setup-token`으로 발급 예정). **ANTHROPIC_API_KEY와 동시 설정 금지**(API 키가 우선해 과금됨). 폴백 OpenRouter. 토큰 미설정 동안 Phase C live 호출만 차단(구조는 fake 클라이언트로 구현). 제3자 서비스 배포 시에는 API 키 필수(정책).
 - KIS·토스증권 키는 후순위(.env.example 참고).
 - Python 3.14 venv(`.venv`), 의존성: pydantic·httpx·typer·pykrx·pandas·pyarrow (uv 미사용, pip).
 - MVP 대상: SK하이닉스(corp_code 00164779, stock 000660), 12월 결산 가정.

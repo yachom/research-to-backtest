@@ -2,7 +2,7 @@
 
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError
@@ -25,10 +25,20 @@ class Settings(BaseSettings):
     krx_id: str = ""
     krx_pw: str = ""
 
-    # LLM은 OpenRouter 경유 무료 모델 사용 (docs/MILESTONES.md D2). Phase C에서만 필요.
+    # LLM (Phase C에서만 필요 — docs/MILESTONES.md D2 재개정, 2026-07-15)
+    # 기본: Claude Agent SDK. 인증은 SDK의 환경변수 체인을 따른다 —
+    # ANTHROPIC_API_KEY(있으면 우선, API 과금) > CLAUDE_CODE_OAUTH_TOKEN(구독).
+    # 둘 다 설정 금지(의도치 않은 API 과금). 값은 LLM 클라이언트가 os.environ에
+    # 주입한다(pydantic-settings는 os.environ을 채우지 않음 — PykrxSource 패턴).
+    llm_provider: Literal["claude_agent_sdk", "openrouter"] = "claude_agent_sdk"
+    claude_code_oauth_token: str = ""
+    anthropic_api_key: str = ""
+    claude_model: str = "sonnet"  # Agent SDK 모델 별칭 (sonnet/opus/haiku)
+
+    # 폴백: OpenRouter (OpenAI 호환 API — 일일 한도 작음)
     openrouter_api_key: str = ""
-    llm_model: str = "inclusionai/ling-2.6-flash:free"
-    llm_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str = "inclusionai/ling-2.6-flash:free"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
     data_dir: Path = Path("data")
     outputs_dir: Path = Path("outputs")
