@@ -10,7 +10,9 @@
 3. docs/DATA_NOTES.md — 실측 관찰(설계를 바꾼 발견들). 새 마일스톤 착수 전 필독
 4. 해당 마일스톤의 docs/specs/*.md — 구현 계약
 
-정본 관계: `README.md` = 사용자 작성 기술 명세 v1.0(원본 보존, §1.1만 v2로 개정됨) /
+정본 관계: `docs/PROJECT_SPEC.md` = 사용자 작성 기술 명세 v1.0 전문(원본 보존, §1.1만
+v2로 개정 — **2026-07-15 C3' 문서 재편으로 README에서 이관**, 코드의 "README §nn"
+참조는 이 문서의 §nn을 뜻한다) / `README.md` = 실행 가이드(재편본) /
 `1804_FEEDBACK.md` = 요구 변경 v2(HITL) 원문 / `docs/HUMAN_IN_THE_LOOP.md`·
 `AI_ROLE_BOUNDARY.md`·`OUTPUT_SCHEMA.md` = v2의 구현 관점 정리.
 
