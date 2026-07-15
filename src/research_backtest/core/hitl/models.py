@@ -436,6 +436,35 @@ class AuthoredContent(BaseModel):
     ai_usage_id: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# RunManifest (구현 보강 — docs/specs/CLI-integration.md §5.0, OUTPUT_SCHEMA.md §0)
+# ---------------------------------------------------------------------------
+
+
+class RunManifest(BaseModel):
+    """실행(run) 1건의 불변 메타 (README §29, OUTPUT_SCHEMA.md §0 run_manifest.json).
+
+    :class:`~research_backtest.core.hitl.states.RunState`(진행 상태·전이 이력)와
+    역할을 분리한다 — 이 모델은 ``create-run`` 시점에 한 번 기록되는 불변 식별
+    정보만 담는다. README §29가 제안하는 config_hash·started_at·completed_at·
+    status는 채택하지 않는다: 상태·이력은 run_state.json이 정본이고, 실행에
+    사용된 설정값은 그 결과 산출물(strategy_spec.json 등) 자체가 이미 기록하므로
+    이 매니페스트에 중복 저장할 이유가 없다(docs/specs/CLI-integration.md §5.0).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    company_query: str  # 사용자가 입력한 질의 문자열 (--company 원본, resolve 이전 값)
+    corp_code: str  # DART 8자리
+    corp_name: str
+    corp_eng_name: str | None = None
+    stock_code: str  # 6자리 — 상장사만 run 생성 허용
+    as_of_date: str  # YYYY-MM-DD (분석 기준일)
+    created_at: str  # KST ISO8601
+    code_version: str | None = None  # git short hash, best-effort
+
+
 __all__ = [
     "AIUsageRecord",
     "AnalystView",
@@ -448,6 +477,7 @@ __all__ = [
     "HypothesisCandidate",
     "HypothesisStatus",
     "RelationshipCandidate",
+    "RunManifest",
     "StrategyModification",
     "StrategyReview",
     "now_kst_iso",
