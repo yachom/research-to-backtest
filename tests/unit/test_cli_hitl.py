@@ -965,14 +965,6 @@ def test_generate_candidates_missing_run_exits_1(settings: Settings) -> None:
     assert result.exit_code == 1
 
 
-def test_generate_report_not_complete_exits_4(settings: Settings) -> None:
-    _make_run(settings.outputs_dir, "RUN-GR1", state=PipelineState.AWAITING_INTERPRETATION)
-    result = runner.invoke(_build_app(), ["generate-report", "--run-id", "RUN-GR1"])
-    assert result.exit_code == 4
-
-
-def test_generate_report_complete_exits_2(settings: Settings) -> None:
-    _make_run(settings.outputs_dir, "RUN-GR2", state=PipelineState.COMPLETE)
-    result = runner.invoke(_build_app(), ["generate-report", "--run-id", "RUN-GR2"])
-    assert result.exit_code == 2
-    assert "C3'" in result.output
+# generate-report 테스트는 실구현(C3', 명세 W3c §2.3) 이후 tests/unit/test_cli_report.py로
+# 이동했다 — 상태 게이트(exit 4)·정상 경로(강건성·보고서·result_explanation 기록)·LLM 실패
+# 시 계속 생성을 그곳에서 검증한다(합성 parquet + FakeLlm).
