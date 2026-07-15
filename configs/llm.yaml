@@ -1,0 +1,7 @@
+# LLM 호출 설정 (MILESTONES D2 재개정 — Claude Agent SDK + 구독 OAuth)
+# 명세: docs/specs/W3a-llm-evidence.md §2.1
+provider: claude_agent_sdk # 폴백 openrouter는 예약만 (키 없음 — D2)
+model: claude-haiku-4-5-20251001 # 저가형 고정 (사용자 지시, 2026-07-15) — 전체 ID로 핀(재현성)
+max_turns: 1
+max_attempts: 3 # JSON 파싱·검증 실패 재시도 상한
+timeout_seconds: 120.0
