@@ -10,11 +10,25 @@ run 픽스처는 ``research_backtest.core.hitl`` 모델을 직접 사용해 CLI
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
 
 from research_backtest.core.config import Settings
+from research_backtest.core.constants import FsDiv, PeriodicReportType, ReprtCode
+from research_backtest.core.dart.financial_api import CollectionSummary, RequestOutcome
+from research_backtest.core.dart.models import DartFiling
+from research_backtest.core.dart.xbrl_downloader import XbrlDownloadOutcome
+from research_backtest.core.financials.pipeline import (
+    METRICS_FILENAME,
+    CoverageReport,
+    FileSummary,
+    FinancialBuildReport,
+    MatchingReport,
+    ValidationCheck,
+    financials_out_dir,
+)
 from research_backtest.core.hitl.models import (
     AnalystView,
     BacktestInterpretation,
@@ -33,6 +47,19 @@ from research_backtest.core.hitl.states import (
     create_run_state,
 )
 from research_backtest.core.hitl.store import RunStore
+from research_backtest.core.market.collector import (
+    DAILY_FILENAME,
+    DatasetOutcome,
+    MarketCollectionSummary,
+    market_calendar_path,
+    market_normalized_stock_dir,
+)
+from research_backtest.core.models import DartCorporation
+from research_backtest.core.reconciliation.pipeline import (
+    BucketSummary,
+    ParseSummary,
+    ReconciliationReport,
+)
 from research_backtest.quant.backtest.metrics import (
     BacktestResult,
     BenchmarkComparison,
@@ -43,6 +70,25 @@ CORP_CODE = "00164779"
 CORP_NAME = "SK하이닉스"
 STOCK_CODE = "000660"
 AS_OF_DATE = "2025-12-31"
+
+#: 화면① 데이터 준비 픽스처용 — DartCorporation 그 자체(§4). ``resolve_corp``를
+#: 통째로 monkeypatch할 때 반환값으로 쓴다(실 DART 호출 없이 corp 식별을 대체).
+SK_HYNIX = DartCorporation(
+    corp_code=CORP_CODE,
+    corp_name=CORP_NAME,
+    corp_eng_name="SK hynix Inc.",
+    stock_code=STOCK_CODE,
+    modify_date="20250102",
+)
+
+#: 비상장 법인 픽스처 — create-run의 "비상장" 분기 테스트용(§4).
+UNLISTED_CORP = DartCorporation(
+    corp_code="99999999",
+    corp_name="비상장테스트",
+    corp_eng_name=None,
+    stock_code=None,
+    modify_date="20250102",
+)
 
 EVIDENCE_IDS = [
     "FIN_OP_INCOME_TURN_2024Q4",
@@ -303,3 +349,154 @@ def make_backtest_interpretation(
         followup_tests=["다음 분기 재검증"],
         created_at=now_kst_iso(),
     )
+
+
+# ---------------------------------------------------------------------------
+# 화면① 데이터 준비 픽스처 (docs/specs/W3d-ui-data-prep.md §4) — test_data_prep.py·
+# test_streamlit_app.py가 공유한다. collector 반환값은 core 모델 그대로 구성해
+# (SimpleNamespace 등 대역 없이) 타입 안전성을 유지한다(mypy strict).
+# ---------------------------------------------------------------------------
+
+
+def mark_financials_ready(settings: Settings, corp_code: str = CORP_CODE) -> None:
+    """financial_metrics.parquet을 빈 파일로 만들어 ensure_data_ready를 통과시킨다."""
+    path = financials_out_dir(settings.data_dir, corp_code) / METRICS_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"")
+
+
+def mark_market_ready(settings: Settings, stock_code: str = STOCK_CODE) -> None:
+    """daily.parquet·거래일 캘린더를 빈 파일로 만들어 ensure_data_ready를 통과시킨다."""
+    daily = market_normalized_stock_dir(settings.data_dir, stock_code) / DAILY_FILENAME
+    daily.parent.mkdir(parents=True, exist_ok=True)
+    daily.write_bytes(b"")
+    calendar = market_calendar_path(settings.data_dir)
+    calendar.parent.mkdir(parents=True, exist_ok=True)
+    calendar.write_bytes(b"")
+
+
+def make_collection_summary(*, corp_code: str = CORP_CODE, count: int = 4) -> CollectionSummary:
+    return CollectionSummary(
+        corp_code=corp_code,
+        fetched_at=now_kst_iso(),
+        outcomes=[
+            RequestOutcome(
+                bsns_year="2024",
+                reprt_code=ReprtCode.ANNUAL,
+                fs_div=FsDiv.CFS,
+                result="FETCHED",
+                row_count=120,
+                sj_div_counts={"BS": 60, "IS": 60},
+                rcept_nos=["20250101000001"],
+            )
+            for _ in range(count)
+        ],
+    )
+
+
+def make_market_summary(
+    *, stock_code: str = STOCK_CODE, skipped_no_auth: bool = False
+) -> MarketCollectionSummary:
+    investor_result = "SKIPPED_NO_AUTH" if skipped_no_auth else "FETCHED"
+    return MarketCollectionSummary(
+        stock_code=stock_code,
+        index_code="1001",
+        outcomes=[
+            DatasetOutcome(dataset="OHLCV", result="FETCHED", row_count=2000),
+            DatasetOutcome(
+                dataset="INVESTOR_VALUE",
+                result=investor_result,
+                row_count=0 if skipped_no_auth else 2000,
+            ),
+        ],
+    )
+
+
+def make_build_report(*, corp_code: str = CORP_CODE, fact_count: int = 42) -> FinancialBuildReport:
+    return FinancialBuildReport(
+        corp_code=corp_code,
+        generated_at=now_kst_iso(),
+        scopes=["CFS", "OFS"],
+        fact_count=fact_count,
+        matching=MatchingReport(
+            per_account_matched_rows={},
+            unmatched_row_count=0,
+            sce_skipped_count=0,
+            processed_row_count=fact_count,
+            unresolved=[],
+        ),
+        derivation_gaps=[],
+        validations=[
+            ValidationCheck(name="accounting_identity", checked=1, passed=True, violations=[])
+        ],
+        coverage=CoverageReport(
+            annual_required_complete=True,
+            recent_quarters_income_complete=True,
+            missing_annual_required=[],
+            missing_recent_quarter_income=[],
+            recent_quarters_checked=[],
+        ),
+        files=FileSummary(
+            normalized_facts_rows=fact_count,
+            quarterly_financials_rows=10,
+            annual_financials_rows=5,
+            financial_metrics_rows=5,
+        ),
+    )
+
+
+def make_reconciliation_report(
+    *, corp_code: str = CORP_CODE, total: int = 100
+) -> ReconciliationReport:
+    bucket = BucketSummary(total=total, by_status={"MATCH": total}, match_rate=1.0)
+    return ReconciliationReport(
+        corp_code=corp_code,
+        generated_at=now_kst_iso(),
+        scopes=["CFS", "OFS"],
+        parse=ParseSummary(newly_parsed=[], already_parsed=[], failed=[]),
+        total=total,
+        by_status={"MATCH": total},
+        annual=bucket,
+        quarterly=bucket,
+        account_year_matrix={},
+        failures=[],
+        records=[],
+    )
+
+
+def make_filing(
+    *, corp_code: str = CORP_CODE, corp_name: str = CORP_NAME, rcept_no: str = "20250301000001"
+) -> DartFiling:
+    return DartFiling(
+        corp_code=corp_code,
+        corp_name=corp_name,
+        stock_code=STOCK_CODE,
+        report_nm="사업보고서(2024.12)",
+        rcept_no=rcept_no,
+        flr_nm=corp_name,
+        rcept_dt=date(2025, 3, 1),
+        rm=None,
+        report_type=PeriodicReportType.ANNUAL,
+        fiscal_period_end=date(2024, 12, 31),
+    )
+
+
+def make_xbrl_outcomes(*, failed: bool = False) -> list[XbrlDownloadOutcome]:
+    if failed:
+        return [
+            XbrlDownloadOutcome(
+                rcept_no="20250301000001",
+                reprt_code="11011",
+                report_name="사업보고서",
+                result="FAILED",
+                reason="네트워크 오류",
+            )
+        ]
+    return [
+        XbrlDownloadOutcome(
+            rcept_no="20250301000001",
+            reprt_code="11011",
+            report_name="사업보고서",
+            result="FETCHED",
+        )
+    ]
