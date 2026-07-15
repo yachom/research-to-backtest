@@ -18,6 +18,8 @@ dependencies = [
     "pykrx>=1.0.45",
     "pandas>=2.2",
     "pyarrow>=17",
+    # LLM (D2 재개정): Claude Agent SDK — 구독 OAuth 토큰 인증, Phase C에서 사용
+    "claude-agent-sdk>=0.1",
 ]
 
 [project.optional-dependencies]
