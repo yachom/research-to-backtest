@@ -71,6 +71,9 @@ from research_backtest.core.market.collector import (
     market_normalized_stock_dir,
 )
 from research_backtest.core.models import DartCorporation
+from research_backtest.quant.backtest.costs import BacktestConfig
+from research_backtest.quant.backtest.metrics import BacktestResult
+from research_backtest.quant.backtest.robustness import run_robustness
 from research_backtest.quant.strategy.compiler import compile_strategy
 from research_backtest.quant.strategy.draft import DEFAULT_PROMPTS_DIR, draft_strategy
 from research_backtest.quant.strategy.registry import resolve_indicator
@@ -87,6 +90,7 @@ from research_backtest.research.evidence import (
     EvidencePackageStore,
     build_financial_evidence,
 )
+from research_backtest.research.report import build_research_report, draft_result_explanation
 
 console = Console()
 
@@ -1167,7 +1171,13 @@ def generate_strategy_draft(
 def generate_report(
     run_id: Annotated[str, typer.Option("--run-id", help="실행 ID")],
 ) -> None:
-    """15개 섹션 보고서 생성 — 상태 인지형 스텁 (§5.7). 실제 구현은 C3'."""
+    """15개 섹션 보고서 + 강건성 분석을 생성한다 (명세 W3c §2.3, HITL §6, README §24.2·§24.3).
+
+    상태 ``COMPLETE``\\ 가 전제다(미달 시 exit 4). ``backtest_result.json``\\ 의 종목·기간·
+    비용을 재사용해 승인 백테스트와 **동일 창**으로 강건성 분석(조건 제거·비용·하위 기간)을
+    실행·저장하고, LLM 결과 설명 초안(실패해도 보고서는 계속 생성 — 게이트 아님)을 덧붙여
+    15-섹션 보고서를 만든다. 상태 전이는 없다(COMPLETE 유지, 재실행 시 덮어씀).
+    """
     settings = get_settings()
     store = RunStore(settings.outputs_dir, run_id)
     run_state = _load_run_state_or_exit(store)
@@ -1175,10 +1185,127 @@ def generate_report(
     with _gate_guard():
         ensure_state_at_least(run_state, PipelineState.COMPLETE)
 
-    console.print(
-        "[yellow]아직 구현되지 않은 명령입니다 — C3'에서 구현(docs/MILESTONES.md 참고).[/yellow]"
+    with _validation_guard():
+        manifest = store.load_run_manifest()
+        review = store.load_strategy_review()
+        hypothesis = store.load_human_hypothesis()
+
+    bt_path = store.run_dir / "backtest_result.json"
+    if not bt_path.exists():
+        console.print(
+            f"[red]backtest_result.json이 없습니다 ({bt_path}). 먼저 backtest를 실행하세요.[/red]"
+        )
+        raise typer.Exit(code=VALIDATION_ERROR_EXIT_CODE)
+    try:
+        backtest_result = BacktestResult.model_validate_json(bt_path.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as err:
+        console.print(f"[red]backtest_result.json을 읽을 수 없습니다 ({bt_path}): {err}[/red]")
+        raise typer.Exit(code=VALIDATION_ERROR_EXIT_CODE) from err
+
+    # 강건성 분석 — 승인 백테스트와 동일 창(기간)·동일 비용으로 재현(명세 W3c §2.1·§2.3).
+    base_config = BacktestConfig(
+        commission_rate=backtest_result.commission_rate,
+        sell_tax_rate=backtest_result.sell_tax_rate,
+        slippage_rate=backtest_result.slippage_rate,
+        initial_cash=backtest_result.initial_cash,
+        benchmark=backtest_result.benchmark.name,
     )
-    raise typer.Exit(code=NOT_IMPLEMENTED_EXIT_CODE)
+    try:
+        robustness = run_robustness(
+            review,
+            data_dir=settings.data_dir,
+            stock_code=manifest.stock_code,
+            corp_code=manifest.corp_code,
+            start_date=backtest_result.start_date,
+            end_date=backtest_result.end_date,
+            base_config=base_config,
+        )
+    except (FileNotFoundError, DataValidationError) as err:
+        console.print(f"[red]강건성 분석 실패: {err}[/red]")
+        raise typer.Exit(code=VALIDATION_ERROR_EXIT_CODE) from err
+    except AssertionError as err:
+        console.print(f"[red]강건성 재현 검증 실패(연구용 경로 불일치): {err}[/red]")
+        raise typer.Exit(code=VALIDATION_ERROR_EXIT_CODE) from err
+
+    # 자기 검증: 비용 1배 결과(원 전략·승인 config)가 승인 백테스트와 일치해야 한다(명세 W3c §2.1).
+    cost_1x = next((c for c in robustness.cost_sensitivity if c.multiplier == 1.0), None)
+    if cost_1x is not None:
+        cum_ok = (cost_1x.cumulative_return is None) == (
+            backtest_result.cumulative_return is None
+        ) and (
+            cost_1x.cumulative_return is None
+            or backtest_result.cumulative_return is None
+            or abs(cost_1x.cumulative_return - backtest_result.cumulative_return) <= 1e-9
+        )
+        if cost_1x.num_trades != backtest_result.num_trades or not cum_ok:
+            console.print(
+                "[red]강건성 재현 검증 실패 — 연구용 경로 결과가 승인 백테스트와 다릅니다"
+                f"(거래 {cost_1x.num_trades} vs {backtest_result.num_trades}).[/red]"
+            )
+            raise typer.Exit(code=VALIDATION_ERROR_EXIT_CODE)
+
+    robustness_path = store.run_dir / "robustness_report.json"
+    robustness_path.write_text(robustness.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+    # LLM 결과 설명 초안 — 부가 기능(게이트 아님): 실패해도 보고서는 계속 생성한다.
+    ai_explanation: str | None = None
+    ai_explanation_origin = "AI_DRAFT_HUMAN_APPROVED"
+    try:
+        llm_config = load_llm_config()
+        client = create_llm_client(llm_config, settings)
+        ai_explanation, explanation_meta = draft_result_explanation(
+            client=client,
+            prompts_dir=DEFAULT_PROMPTS_DIR,
+            result=backtest_result,
+            hypothesis=hypothesis,
+            robustness=robustness,
+        )
+        store.append_ai_usage(
+            AIUsageRecord(
+                usage_id=f"usage-result_explanation-{datetime.now(KST):%Y%m%d%H%M%S}",
+                stage="result_explanation",
+                model=explanation_meta.model,
+                prompt_name="result_explanation",
+                prompt_version="v1",
+                input_artifact_ids=[
+                    "backtest_result.json",
+                    "human_investment_hypothesis.json",
+                    "robustness_report.json",
+                ],
+                output_artifact_ids=["research_report.md"],
+                ai_role="결과 설명 초안",
+                human_review_required=True,
+                created_at=now_kst_iso(),
+            )
+        )
+    except (ConfigError, DataValidationError) as err:
+        console.print(
+            f"[yellow]AI 설명 초안 생성 실패 — 사용자 해석만 수록합니다(부가 기능): {err}[/yellow]"
+        )
+        ai_explanation = None
+
+    with _validation_guard():
+        report_md = build_research_report(
+            store,
+            robustness=robustness,
+            ai_explanation=ai_explanation,
+            ai_explanation_origin=ai_explanation_origin,
+        )
+    report_path = store.run_dir / "research_report.md"
+    report_path.write_text(report_md, encoding="utf-8")
+
+    title = report_md.splitlines()[0].lstrip("# ").strip()
+    console.print(f"[green]research_report.md 저장 완료: {report_path}[/green]")
+    console.print(f"강건성 리포트 저장 완료: {robustness_path}")
+    console.print(f"보고서 제목: {title}")
+    console.print(
+        f"섹션 수: 15 · 조건 제거 변형 수: {len(robustness.condition_ablation)} · "
+        f"비용 배율 {len(robustness.cost_sensitivity)}종 · 하위 기간 {len(robustness.subperiod)}종"
+    )
+    if ai_explanation is None:
+        console.print("[yellow]AI 설명 초안: 미수록(생성 실패) — 사용자 해석만 포함[/yellow]")
+    console.print("보고서 생성 완료 — 파이프라인 COMPLETE 유지(재실행 시 덮어씀).")
+    _print_status_footer(run_id, run_state)
 
 
 # ---------------------------------------------------------------------------
