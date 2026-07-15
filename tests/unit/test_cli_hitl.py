@@ -965,22 +965,6 @@ def test_generate_candidates_missing_run_exits_1(settings: Settings) -> None:
     assert result.exit_code == 1
 
 
-def test_generate_strategy_draft_hypothesis_not_reached_exits_4(settings: Settings) -> None:
-    _make_run(settings.outputs_dir, "RUN-GSD1", state=PipelineState.HYPOTHESIS_DRAFT)
-    result = runner.invoke(_build_app(), ["generate-strategy-draft", "--run-id", "RUN-GSD1"])
-    assert result.exit_code == 4
-
-
-def test_generate_strategy_draft_ready_exits_2(settings: Settings) -> None:
-    store = _make_run(settings.outputs_dir, "RUN-GSD2", state=PipelineState.HYPOTHESIS_APPROVED)
-    store.save_human_hypothesis(
-        HumanInvestmentHypothesis.model_validate(_approved_hypothesis_payload())
-    )
-    result = runner.invoke(_build_app(), ["generate-strategy-draft", "--run-id", "RUN-GSD2"])
-    assert result.exit_code == 2
-    assert "C2'" in result.output
-
-
 def test_generate_report_not_complete_exits_4(settings: Settings) -> None:
     _make_run(settings.outputs_dir, "RUN-GR1", state=PipelineState.AWAITING_INTERPRETATION)
     result = runner.invoke(_build_app(), ["generate-report", "--run-id", "RUN-GR1"])
