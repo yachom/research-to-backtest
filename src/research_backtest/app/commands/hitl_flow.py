@@ -39,6 +39,7 @@ from research_backtest.core.financials.pipeline import METRICS_FILENAME, financi
 from research_backtest.core.hitl.diff import diff_strategies
 from research_backtest.core.hitl.gates import ensure_hypothesis_approved, ensure_state_at_least
 from research_backtest.core.hitl.models import (
+    AIUsageRecord,
     AnalystView,
     BacktestInterpretation,
     HumanInvestmentHypothesis,
@@ -61,6 +62,7 @@ from research_backtest.core.hitl.validation import (
     validate_analyst_view,
     validate_hypothesis,
 )
+from research_backtest.core.llm import create_llm_client, load_llm_config
 from research_backtest.core.market.collector import (
     DAILY_FILENAME,
     market_calendar_path,
@@ -68,6 +70,7 @@ from research_backtest.core.market.collector import (
 )
 from research_backtest.core.models import DartCorporation
 from research_backtest.quant.strategy.compiler import compile_strategy
+from research_backtest.quant.strategy.draft import DEFAULT_PROMPTS_DIR, draft_strategy
 from research_backtest.quant.strategy.registry import resolve_indicator
 from research_backtest.quant.strategy.schema import parse_strategy_spec
 
@@ -837,7 +840,17 @@ def generate_candidates(
 def generate_strategy_draft(
     run_id: Annotated[str, typer.Option("--run-id", help="실행 ID")],
 ) -> None:
-    """전략 DSL 초안 생성 — 상태 인지형 스텁 (§5.7). 게이트는 스텁에서도 강제한다."""
+    """승인된 투자 가설을 전략 DSL 초안으로 변환한다 (명세 W3b-candidates-strategy.md §3.2).
+
+    기존 게이트 2종(``ensure_state_at_least(HYPOTHESIS_APPROVED)``·
+    ``ensure_hypothesis_approved``)을 그대로 유지하고, 그 위에 "이미 승인된
+    전략은 초안 재생성으로 무효화하지 않는다"는 상태 정책을 추가한다:
+    ``HYPOTHESIS_APPROVED``는 정상 경로(초안 생성 후 2단계 전진 —
+    ``STRATEGY_DRAFT_READY``→``AWAITING_STRATEGY_REVIEW``), ``STRATEGY_DRAFT_READY``·
+    ``AWAITING_STRATEGY_REVIEW``는 재생성(초안을 다시 만들되 상태 전이 없음),
+    ``STRATEGY_APPROVED`` 이상은 거부한다(회귀는 ``approve-strategy`` 재승인
+    경로로만 가능하다 — 원문 §13).
+    """
     settings = get_settings()
     store = RunStore(settings.outputs_dir, run_id)
     run_state = _load_run_state_or_exit(store)
@@ -849,11 +862,86 @@ def generate_strategy_draft(
         hypothesis = store.load_human_hypothesis()
     with _gate_guard():
         ensure_hypothesis_approved(hypothesis)
+    with _gate_guard():
+        _check_allowed_state(
+            run_state,
+            {
+                PipelineState.HYPOTHESIS_APPROVED,
+                PipelineState.STRATEGY_DRAFT_READY,
+                PipelineState.AWAITING_STRATEGY_REVIEW,
+            },
+            command="generate-strategy-draft",
+        )
+
+    with _validation_guard():
+        manifest = store.load_run_manifest()
+
+    try:
+        llm_config = load_llm_config()
+        client = create_llm_client(llm_config, settings)
+    except ConfigError as err:
+        console.print(f"[red]설정 오류: {err}[/red]")
+        raise typer.Exit(code=CONFIG_ERROR_EXIT_CODE) from err
+
+    with _validation_guard():
+        draft, metadata = draft_strategy(
+            hypothesis,
+            stock_code=manifest.stock_code,
+            client=client,
+            prompts_dir=DEFAULT_PROMPTS_DIR,
+            max_attempts=llm_config.max_attempts,
+        )
+
+    store.save_strategy_draft(draft)
+    store.append_ai_usage(
+        AIUsageRecord(
+            usage_id=f"usage-strategy_translation-{datetime.now(KST).strftime('%Y%m%d%H%M%S')}",
+            stage="strategy_translation",
+            model=metadata.model,
+            prompt_name="strategy_translation",
+            prompt_version="v1",
+            input_artifact_ids=["human_investment_hypothesis.json"],
+            output_artifact_ids=["strategy_draft.json"],
+            ai_role="전략 초안 변환",
+            human_review_required=True,
+            created_at=now_kst_iso(),
+        )
+    )
+
+    if run_state.current_state == PipelineState.HYPOTHESIS_APPROVED:
+        run_state = advance(run_state, PipelineState.STRATEGY_DRAFT_READY, actor="system")
+        run_state = advance(run_state, PipelineState.AWAITING_STRATEGY_REVIEW, actor="system")
+        store.save_run_state(run_state)
+    else:
+        console.print("[yellow]재생성 — 상태 전이 없음[/yellow]")
 
     console.print(
-        "[yellow]아직 구현되지 않은 명령입니다 — C2'에서 구현(docs/MILESTONES.md 참고).[/yellow]"
+        f"[green]strategy_draft 저장 완료: {store.run_dir / 'strategy_draft.json'}[/green]"
     )
-    raise typer.Exit(code=NOT_IMPLEMENTED_EXIT_CODE)
+    console.print(json.dumps(draft, ensure_ascii=False, indent=2))
+
+    table = Table(title="LLM 메타")
+    for column in (
+        "model",
+        "num_attempts",
+        "duration_ms",
+        "input_tokens",
+        "output_tokens",
+        "cost_usd_notional",
+    ):
+        table.add_column(column)
+    table.add_row(
+        metadata.model,
+        str(metadata.num_attempts),
+        str(metadata.duration_ms),
+        str(metadata.input_tokens) if metadata.input_tokens is not None else "-",
+        str(metadata.output_tokens) if metadata.output_tokens is not None else "-",
+        f"{metadata.cost_usd_notional:.6f}" if metadata.cost_usd_notional is not None else "-",
+    )
+    console.print(table)
+
+    console.print("검토·수정 후 approve-strategy --review로 승인하세요.")
+    _print_status_footer(run_id, run_state)
 
 
 def generate_report(
