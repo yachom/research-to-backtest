@@ -1,11 +1,17 @@
-"""Streamlit 엔트리 (docs/specs/W3c-report-ui.md §3.1, S1 소유).
+"""Streamlit 엔트리 (docs/specs/W3c-report-ui.md §3.1, docs/specs/W3e-ui-ux.md F2, S1 소유).
 
 실행: ``streamlit run src/research_backtest/app/streamlit_app.py``.
 
-사이드바(run 선택·생성·상태 배지) + 본문 7화면 탭 네비게이션으로 구성한다.
-비즈니스 로직은 전혀 갖지 않는다 — :mod:`research_backtest.app.ui.state`\\ 로
-잠금 여부를 읽고, :mod:`research_backtest.app.ui.screens`\\ 의 렌더 함수를
-호출할 뿐이다. ``app/cli.py``·``app/commands/``는 import하지 않는다(§1).
+사이드바(run 선택·상태 배지·화면 이동) + 본문 1화면 렌더링으로 구성한다.
+``st.tabs``\\ 는 rerun마다 첫 탭으로 리셋되어(W3e-ui-ux.md U1a) 저장 버튼이
+끝날 때마다 호출하는 ``st.rerun()``\\ 이 항상 화면①로 되돌렸다 — 사이드바
+radio 네비게이션(session_state 보존, :func:`screens.render_nav`)으로 대체해
+저장·전이 후에도 현재 화면이 유지된다(F2). 매 rerun마다 선택된 화면 1개만
+렌더한다(F2 "화면 렌더 1개만" 단순화) — 잠긴 화면은 해당 ``render_screenN``\\
+이 잠금 배너를 그린다. 비즈니스 로직은 전혀 갖지 않는다 —
+:mod:`research_backtest.app.ui.state`\\ 로 잠금 여부를 읽고,
+:mod:`research_backtest.app.ui.screens`\\ 의 렌더 함수를 호출할 뿐이다.
+``app/cli.py``·``app/commands/``는 import하지 않는다(§1).
 """
 
 from __future__ import annotations
@@ -28,16 +34,15 @@ st.caption(
 
 _settings = get_settings()
 _selected_run_id = screens.render_sidebar(_settings)
+_nav_index = screens.render_nav()
 
 if _selected_run_id is None:
-    st.info("사이드바에서 run을 선택하거나, 아래 화면①에서 새 run을 생성하세요.")
-    _tabs = st.tabs(list(state.SCREEN_TITLES))
-    with _tabs[0]:
+    st.info("사이드바에서 run을 선택하거나, 화면①에서 새 run을 생성하세요.")
+    if _nav_index == 0:
         screens.render_screen1(_settings, None)
-    for _tab, _title in zip(_tabs[1:], state.SCREEN_TITLES[1:], strict=True):
-        with _tab:
-            st.subheader(_title)
-            st.info("먼저 사이드바에서 run을 선택하거나 생성하세요.")
+    else:
+        st.subheader(state.SCREEN_TITLES[_nav_index])
+        st.info("먼저 사이드바에서 run을 선택하거나 생성하세요.")
 else:
     _store = RunStore(_settings.outputs_dir, _selected_run_id)
     try:
@@ -51,18 +56,17 @@ else:
         )
         st.caption(f"다음 단계: {state.NEXT_STEP_HINTS[_run_state.current_state]}")
 
-        _tabs = st.tabs(list(state.SCREEN_TITLES))
-        with _tabs[0]:
+        if _nav_index == 0:
             screens.render_screen1(_settings, _selected_run_id)
-        with _tabs[1]:
+        elif _nav_index == 1:
             screens.render_screen2(_settings, _store, _run_state)
-        with _tabs[2]:
+        elif _nav_index == 2:
             screens.render_screen3(_store, _run_state)
-        with _tabs[3]:
+        elif _nav_index == 3:
             screens.render_screen4(_store, _run_state)
-        with _tabs[4]:
+        elif _nav_index == 4:
             screens.render_screen5(_settings, _store, _run_state)
-        with _tabs[5]:
+        elif _nav_index == 5:
             screens.render_screen6(_settings, _store, _run_state)
-        with _tabs[6]:
+        else:
             screens.render_screen7(_store, _run_state)

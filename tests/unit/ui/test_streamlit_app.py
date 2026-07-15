@@ -60,12 +60,13 @@ APP_PATH = (
 )
 
 
-def _run_option(run_id: str, state_value: PipelineState) -> str:
-    return f"{run_id} — {CORP_NAME} [{ui_state.PIPELINE_STATE_LABELS[state_value]}]"
-
-
 def _has_key(widgets: object, key: str) -> bool:
     return any(getattr(w, "key", None) == key for w in widgets)  # type: ignore[attr-defined]
+
+
+#: 네비게이션 radio의 위젯 key — research_backtest.app.ui.screens.NAV_WIDGET_KEY와
+#: 동일한 문자열이다(다른 위젯 key와 동일하게 리터럴로 참조한다, docs/specs/W3e-ui-ux.md F2).
+NAV_KEY = "nav_screen"
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +80,13 @@ def test_app_loads_with_no_runs(ui_settings: Settings) -> None:
     assert not at.exception
     assert _has_key(at.text_input, "scr1_company")
     assert any("등록된 run이 없습니다" in info.value for info in at.info)
+
+    # 화면 이동(F2) — 네비게이션 radio로 화면②를 선택하면(아직 run 미선택)
+    # "run 선택" 안내만 보인다. rerun 후에도 radio 선택이 유지된다는 것
+    # 자체가 st.tabs 리셋 문제(U1a)의 해결을 보여준다.
+    at.radio(key=NAV_KEY).set_value(1).run()
+    assert not at.exception
+    assert at.radio(key=NAV_KEY).value == 1
     assert any("먼저 사이드바에서 run을 선택" in info.value for info in at.info)
 
 
@@ -92,17 +100,24 @@ def test_screen_state_data_ready(ui_settings: Settings) -> None:
     make_run_store(ui_settings, run_id, target_state=PipelineState.DATA_READY)
 
     at = AppTest.from_file(str(APP_PATH), default_timeout=30).run()
-    at.selectbox(key="sidebar_run_select").select(_run_option(run_id, PipelineState.DATA_READY))
-    at.run()
+    at.selectbox(key="sidebar_run_select").select(run_id).run()
 
+    # 화면② — 생성 버튼이 보인다(각 화면은 nav 선택 시에만 렌더된다, F2).
+    at.radio(key=NAV_KEY).set_value(1).run()
     assert not at.exception
     assert _has_key(at.button, f"scr2_generate_btn__{run_id}")
 
     # 화면③~⑦은 아직 진입 불가 — 잠금 사유가 표시되고 폼 위젯은 렌더되지 않는다.
+    at.radio(key=NAV_KEY).set_value(2).run()
     assert any("AI 분석 후보를 먼저 생성하세요" in w.value for w in at.warning)
     assert not _has_key(at.text_input, f"scr3_view_id__{run_id}")
+
+    at.radio(key=NAV_KEY).set_value(3).run()
     assert any("분석 관점을 먼저 저장하세요" in w.value for w in at.warning)
     assert not _has_key(at.text_input, f"scr4_id__{run_id}")
+
+    # 화면⑦(index 6) — AWAITING_INTERPRETATION 이전은 잠금(screen7_availability).
+    at.radio(key=NAV_KEY).set_value(6).run()
     assert any("백테스트를 먼저 실행하세요" in w.value for w in at.warning)
 
 
@@ -118,22 +133,22 @@ def test_screen_state_awaiting_analyst_view(ui_settings: Settings) -> None:
     store.save_candidate_analysis(make_candidate_analysis())
 
     at = AppTest.from_file(str(APP_PATH), default_timeout=30).run()
-    at.selectbox(key="sidebar_run_select").select(
-        _run_option(run_id, PipelineState.AWAITING_ANALYST_VIEW)
-    )
-    at.run()
+    at.selectbox(key="sidebar_run_select").select(run_id).run()
 
-    assert not at.exception
     # 화면② — AI 후보가 이미 있으므로 재생성 버튼 + 후보 statement가 보인다.
+    at.radio(key=NAV_KEY).set_value(1).run()
+    assert not at.exception
     assert _has_key(at.button, f"scr2_generate_btn__{run_id}")
     assert any("영업이익이 흑자로 전환되었다." in md.value for md in at.markdown)
 
     # 화면③ — 편집 가능한 폼이 렌더되고 잠겨있지 않다.
+    at.radio(key=NAV_KEY).set_value(2).run()
     view_id_widget = at.text_input(key=f"scr3_view_id__{run_id}")
     assert view_id_widget.disabled is False
     assert _has_key(at.multiselect, f"scr3_selected__{run_id}")
 
     # 화면④ — 아직 분석 관점이 저장되지 않았으므로 잠금.
+    at.radio(key=NAV_KEY).set_value(3).run()
     assert any("분석 관점을 먼저 저장하세요" in w.value for w in at.warning)
     assert not _has_key(at.text_input, f"scr4_id__{run_id}")
 
@@ -158,27 +173,31 @@ def test_screen_state_complete(ui_settings: Settings) -> None:
     store.save_backtest_interpretation(make_backtest_interpretation())
 
     at = AppTest.from_file(str(APP_PATH), default_timeout=30).run()
-    at.selectbox(key="sidebar_run_select").select(_run_option(run_id, PipelineState.COMPLETE))
-    at.run()
-
-    assert not at.exception
+    at.selectbox(key="sidebar_run_select").select(run_id).run()
 
     # 화면② — 이미 분석 관점 이후로 진행되어 재생성 버튼은 없고 읽기 전용 안내만 있다.
+    at.radio(key=NAV_KEY).set_value(1).run()
+    assert not at.exception
     assert not _has_key(at.button, f"scr2_generate_btn__{run_id}")
     assert any("재생성할 수 없습니다" in w.value for w in at.info)
 
-    # 화면③④⑤ — 읽기 전용(폼은 보이되 비활성화, 저장·승인 버튼 없음).
+    # 화면③④ — 읽기 전용(폼은 보이되 비활성화, 저장·승인 버튼 없음).
+    at.radio(key=NAV_KEY).set_value(2).run()
     assert at.text_input(key=f"scr3_view_id__{run_id}").disabled is True
     assert not _has_key(at.button, f"scr3_save_btn__{run_id}")
+
+    at.radio(key=NAV_KEY).set_value(3).run()
     assert at.text_input(key=f"scr4_id__{run_id}").disabled is True
     assert not _has_key(at.button, f"scr4_approve_btn__{run_id}")
 
     # 화면⑥ — 성과지표 표 + 거래내역이 렌더된다.
+    at.radio(key=NAV_KEY).set_value(5).run()
     assert any("demo_strategy" in md.value for md in at.markdown)
     assert len(at.table) > 0
     assert len(at.dataframe) > 0
 
     # 화면⑦ — COMPLETE 안내 + generate-report 힌트.
+    at.radio(key=NAV_KEY).set_value(6).run()
     assert any("COMPLETE" in s.value for s in at.success)
     assert any("generate-report" in c.value for c in at.caption)
 
@@ -195,10 +214,8 @@ def test_screen3_save_matches_cli_transition(ui_settings: Settings) -> None:
     store.save_candidate_analysis(make_candidate_analysis())
 
     at = AppTest.from_file(str(APP_PATH), default_timeout=30).run()
-    at.selectbox(key="sidebar_run_select").select(
-        _run_option(run_id, PipelineState.AWAITING_ANALYST_VIEW)
-    )
-    at.run()
+    at.selectbox(key="sidebar_run_select").select(run_id).run()
+    at.radio(key=NAV_KEY).set_value(2).run()
 
     at.text_input(key=f"scr3_view_id__{run_id}").set_value("view-e2e")
     at.text_input(key=f"scr3_author__{run_id}").set_value("테스트 사용자")
@@ -238,6 +255,42 @@ def test_screen3_save_matches_cli_transition(ui_settings: Settings) -> None:
     assert saved_view.rejected_evidence_ids == [EVIDENCE_IDS[2]]
     assert saved_view.rejected_evidence_reasons == {EVIDENCE_IDS[2]: "이번 범위 밖"}
     assert saved_view.counterarguments == ["이미 선반영되었을 수 있다."]
+
+
+# ---------------------------------------------------------------------------
+# U1·U3 회귀 고정 (docs/specs/W3e-ui-ux.md §3.1) — 화면③ 저장(상태 전이 발생)
+# 후 예외 없음 + sidebar 선택 run_id 동일 + 현재 네비게이션이 화면④.
+#
+# 과거 구현은 (a) st.tabs가 rerun마다 첫 탭으로 리셋되고(U1a), (b) 사이드바
+# selectbox 옵션 라벨에 가변 상태 문자열이 섞여 있어(U1b) 상태 전이가 일어나는
+# 저장마다 화면①로 떨어지고 run 선택도 풀렸다. 라디오 네비게이션(session_state
+# 보존, F2)과 run_id 옵션 값(F1)으로 고정한 뒤에는 예외 없이 run 선택 유지 +
+# 화면④ 자동 전진(F3)이 함께 관측돼야 한다.
+# ---------------------------------------------------------------------------
+
+
+def test_screen3_save_preserves_selection_and_advances_nav(ui_settings: Settings) -> None:
+    run_id = "20260101_000006_TESTCO"
+    store = make_run_store(ui_settings, run_id, target_state=PipelineState.AWAITING_ANALYST_VIEW)
+    write_evidence_manifest(store.run_dir)
+    store.save_candidate_analysis(make_candidate_analysis())
+
+    at = AppTest.from_file(str(APP_PATH), default_timeout=30).run()
+    at.selectbox(key="sidebar_run_select").select(run_id).run()
+    at.radio(key=NAV_KEY).set_value(2).run()
+
+    at.text_input(key=f"scr3_view_id__{run_id}").set_value("view-e2e")
+    at.text_area(key=f"scr3_question__{run_id}").set_value("실적 회복은 선반영되었는가?")
+    at.text_area(key=f"scr3_thesis__{run_id}").set_value("서프라이즈 여부가 핵심이다.")
+    at.multiselect(key=f"scr3_selected__{run_id}").set_value([EVIDENCE_IDS[0], EVIDENCE_IDS[1]])
+    at.text_area(key=f"scr3_counter__{run_id}").set_value("이미 선반영되었을 수 있다.")
+
+    at.button(key=f"scr3_save_btn__{run_id}").click().run()
+
+    assert not at.exception
+    assert at.selectbox(key="sidebar_run_select").value == run_id
+    assert at.radio(key=NAV_KEY).value == 3
+    assert _has_key(at.text_input, f"scr4_id__{run_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +407,10 @@ def test_sidebar_create_run_with_existing_runs_autoselects_new_run(
     instantiated")으로 죽었다 — 첫 run(빈 outputs, selectbox 미생성)만 테스트돼
     잡히지 않았던 실사용 크래시. 수정 후에는 펜딩 키에 예약하고 다음 rerun에서
     위젯 생성 **전**에 적용되므로, 예외 없이 새 run이 자동 선택되어야 한다.
+
+    새 run 생성 폼은 화면①에만 있다(docs/specs/W3e-ui-ux.md F5 — 사이드바
+    생성 폼은 진입점 이중화라 제거됐다). 생성 성공은 run 선택뿐 아니라
+    네비게이션도 화면②로 자동 전진해야 한다(F3).
     """
     make_run_store(ui_settings, "RUN-EXISTING", target_state=PipelineState.DATA_READY)
     mark_financials_ready(ui_settings)
@@ -363,14 +420,30 @@ def test_sidebar_create_run_with_existing_runs_autoselects_new_run(
 
     at = AppTest.from_file(str(APP_PATH), default_timeout=30).run()
     assert _has_key(at.selectbox, "sidebar_run_select")  # 전제: 위젯이 이미 존재
+    assert not _has_key(at.text_input, "sidebar_new_company")  # F5 — 사이드바 생성 폼 제거됨
 
-    at.text_input(key="sidebar_new_company").set_value(CORP_NAME)
+    at.text_input(key="scr1_company").set_value(CORP_NAME)
     at.run()
-    at.button(key="sidebar_create_run_btn").click().run()
+    at.button(key="scr1_create_run_btn").click().run()
 
     assert not at.exception
     run_ids = sorted(p.name for p in ui_settings.outputs_dir.iterdir() if p.is_dir())
     assert len(run_ids) == 2
     new_run_id = next(r for r in run_ids if r != "RUN-EXISTING")
-    selected = at.selectbox(key="sidebar_run_select").value
-    assert selected is not None and selected.startswith(f"{new_run_id} —")
+    assert at.selectbox(key="sidebar_run_select").value == new_run_id
+    assert at.radio(key=NAV_KEY).value == 1
+
+
+def test_sidebar_goto_screen1_button_navigates(ui_settings: Settings) -> None:
+    """F5 — 사이드바의 "① 화면으로 이동" 버튼은 화면①로 네비게이션을 예약한다."""
+    make_run_store(ui_settings, "RUN-EXISTING", target_state=PipelineState.DATA_READY)
+
+    at = AppTest.from_file(str(APP_PATH), default_timeout=30).run()
+    at.radio(key=NAV_KEY).set_value(1).run()
+    assert at.radio(key=NAV_KEY).value == 1
+
+    at.button(key="sidebar_goto_screen1_btn").click().run()
+
+    assert not at.exception
+    assert at.radio(key=NAV_KEY).value == 0
+    assert _has_key(at.text_input, "scr1_company")
