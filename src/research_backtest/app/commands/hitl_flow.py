@@ -100,12 +100,12 @@ GATE_BLOCKED_EXIT_CODE = 4  # ApprovalGateError 전용 (신설, §3)
 
 # 명령 실행 후 현재 상태에서 다음에 실행할 명령 안내 (§6.3 표의 "다음 단계" 열).
 _NEXT_STEP_HINTS: dict[PipelineState, str] = {
-    PipelineState.DATA_READY: "generate-candidates (C1' 예정)",
+    PipelineState.DATA_READY: "generate-candidates",
     PipelineState.CANDIDATE_ANALYSIS_READY: "create-analyst-view",
     PipelineState.AWAITING_ANALYST_VIEW: "create-analyst-view",
     PipelineState.ANALYST_VIEW_APPROVED: "create-hypothesis",
     PipelineState.HYPOTHESIS_DRAFT: "create-hypothesis (APPROVED 입력으로 승인)",
-    PipelineState.HYPOTHESIS_APPROVED: "generate-strategy-draft (C2' 예정)",
+    PipelineState.HYPOTHESIS_APPROVED: "generate-strategy-draft",
     PipelineState.STRATEGY_DRAFT_READY: "approve-strategy",
     PipelineState.AWAITING_STRATEGY_REVIEW: "approve-strategy",
     PipelineState.STRATEGY_APPROVED: "backtest",

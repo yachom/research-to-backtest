@@ -5,6 +5,52 @@
 
 ---
 
+## 중간 기록 #4 — 2026-07-15 (Wave 3a·3b 완료 — 첫 live LLM E2E)
+
+### 마일스톤 보드
+
+| 상태 | 마일스톤 |
+|---|---|
+| ✅ 병합 완료 | ~#3까지 전체 + **Wave 3a: L1 core/llm(Haiku·구독 OAuth) · E1 Evidence Store** + **Wave 3b: C1' 후보 생성기(research·generate-candidates 실구현) · C2' 전략 초안(generate-strategy-draft 실구현)** |
+| ⏭ 남은 작업 | **C3'**: 15-섹션 보고서·generate-report·result_explanation 초안·Streamlit 7화면·강건성·문서 재편(§25) → 제출물 마감(과제1·2 PDF) |
+
+### 품질 게이트 (main)
+
+pytest **807 passed·4 skipped**(live LLM·실데이터 integration 포함, 4:14), ruff·format 클린, **mypy strict 164파일 0 이슈**. unit 768 passed.
+
+### Wave 3 하이라이트
+
+1. **첫 live LLM E2E 관통** (run 20260715_152048, CLI만·수동 전진 0회):
+   `research`(evidence 122건 + Haiku 후보 생성: findings 8범주·가설 후보 4건, 각 1시도) →
+   create-analyst-view → create-hypothesis(APPROVED) → `generate-strategy-draft`(Haiku 1시도,
+   24초 — FundamentalsFlowBreakout, §22 체결 고정·A5 컴파일 통과) → approve-strategy →
+   backtest(+110.76%·5거래·PF 8.13 — §23.4 기본 전략과 동형 규칙으로 수렴해 Wave 2 수치 재현) →
+   submit-interpretation → **COMPLETE**. `ai_usage_log.jsonl` 3건(전부 claude-haiku-4-5·프롬프트 v1) —
+   과제 2 증빙 라인 가동.
+2. **Evidence Store PIT 실증**: as_of=2025-12-31 → 122건(5카테고리, 흑자전환 서사 최상위),
+   as_of=2023-06-30 재실행 → 미래 공시 유입 0건. evidence_id 봉쇄 validator가 LLM의
+   근거 인용을 기계적으로 강제(위반 시 재시도 피드백).
+3. **D2 확정 가동**: Claude Agent SDK + 구독 OAuth(ANTHROPIC_API_KEY 동시 설정 차단),
+   모델은 configs/llm.yaml에 claude-haiku-4-5-20251001 핀(저가형 — 사용자 지시), 토큰
+   비노출 자동 테스트, JSON 재시도 루프(코드펜스 실측 반영).
+4. **운영 사건 기록(D8 교훈)**: C1' 에이전트가 timeout 120초 제약 아래 지연 실험(live 반복
+   호출)·max_evidence 60→15 축소로 이탈 → 사용자 중단. 근본 원인은 timeout(출력 긴 호출
+   실측 124~127초)으로 확인, 360초 상향(4829fe3) 후 **사용자 결정으로 메인 세션이 직접
+   마무리**: max_evidence 60 복원(15는 CASH_FLOW·STABILITY 카테고리 누락 유발), 프롬프트
+   항목 상한(범주별 ≤3)은 유지, live 재검증 후 병합.
+
+### 에이전트 운영
+
+Wave 3a: L1=Sonnet(+1,498줄) ∥ E1=Opus(+1,743줄) — 공유 파일 0, 충돌 0.
+Wave 3b: C2'=Sonnet(+1,069줄) ∥ C1'=Opus(+1,210줄, 중단 후 메인 마무리) — hitl_flow.py
+구역 편집, 충돌은 import 1건(메인 union 해소). 명세: docs/specs/W3a·W3b.
+
+### 다음
+
+C3' (보고서·Streamlit·강건성·문서 재편) → 제출물 마감.
+
+---
+
 ## 중간 기록 #3 — 2026-07-15 (CLI 통합 패스 완료)
 
 ### 마일스톤 보드
