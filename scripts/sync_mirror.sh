@@ -7,6 +7,8 @@ URL=$2
 DIR=$(mktemp -d)/mirror-$NAME
 rm -rf "$DIR" && mkdir -p "$DIR"
 git -C "$MAIN" archive main | tar -x -C "$DIR"
+# 미러는 실행·CI를 지원하지 않는 열람용 뷰 — 워크플로 제거 (CI는 정본에서만)
+rm -rf "$DIR/.github"
 
 if [[ $NAME == p1 ]]; then
   TITLE="Project 1 — 기업 리서치·투자 가설 (미러)"
