@@ -25,11 +25,13 @@ from research_backtest.core.hitl.models import (
     CandidateAnalysis,
     HumanInvestmentHypothesis,
     HypothesisCandidate,
+    RunManifest,
     StrategyReview,
 )
 from research_backtest.core.hitl.states import RunState
 
 AI_USAGE_LOG_FILENAME = "ai_usage_log.jsonl"
+RUN_MANIFEST_FILENAME = "run_manifest.json"
 
 
 class RunStore:
@@ -60,6 +62,18 @@ class RunStore:
             return json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as err:
             raise DataValidationError(f"{filename}이(가) 올바른 JSON이 아닙니다 ({path}).") from err
+
+    # -- run_manifest (불변 실행 메타 — docs/specs/CLI-integration.md §5.0) -------
+
+    def save_run_manifest(self, manifest: RunManifest) -> Path:
+        return self._write_json(RUN_MANIFEST_FILENAME, manifest.model_dump(mode="json"))
+
+    def load_run_manifest(self) -> RunManifest:
+        data = self._read_json(
+            RUN_MANIFEST_FILENAME,
+            next_step_hint="create-run으로 실행을 먼저 등록하세요.",
+        )
+        return RunManifest.model_validate(data)
 
     # -- run_state ---------------------------------------------------------
 
@@ -198,4 +212,4 @@ class RunStore:
         return records
 
 
-__all__ = ["AI_USAGE_LOG_FILENAME", "RunStore"]
+__all__ = ["AI_USAGE_LOG_FILENAME", "RUN_MANIFEST_FILENAME", "RunStore"]
