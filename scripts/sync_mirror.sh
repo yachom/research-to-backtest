@@ -2,10 +2,9 @@
 # 과제별 미러 레포 스냅샷 빌더 — 정본 main 트리에서 반대편 프로젝트를 제외한 뷰 생성
 set -euo pipefail
 MAIN=/Users/baemingyu/project/MC_investment_homework
-SCRATCH=${0:a:h}
 NAME=$1     # p1 | p2
 URL=$2
-DIR=$SCRATCH/mirror-$NAME
+DIR=$(mktemp -d)/mirror-$NAME
 rm -rf "$DIR" && mkdir -p "$DIR"
 git -C "$MAIN" archive main | tar -x -C "$DIR"
 
@@ -44,5 +43,5 @@ git -c user.name="$(git -C "$MAIN" config user.name)" -c user.email="$(git -C "$
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 git remote add origin "$URL"
-git push -q -u origin main
+git push -q -u --force origin main  # 미러는 읽기 전용 스냅샷 — 항상 정본으로 덮어씀
 echo "$NAME OK -> $URL ($(git rev-parse --short HEAD))"
