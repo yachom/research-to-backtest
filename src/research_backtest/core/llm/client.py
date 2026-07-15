@@ -125,10 +125,27 @@ class ClaudeAgentSdkClient:
         self._config = config
 
     def complete_text(self, *, system_prompt: str, user_prompt: str) -> tuple[str, LlmCallMetadata]:
-        """1회 LLM 호출 — 내부적으로 asyncio.run()으로 감싼 동기 메서드(명세 §2.2)."""
-        return asyncio.run(
-            self._complete_text_async(system_prompt=system_prompt, user_prompt=user_prompt)
-        )
+        """1회 LLM 호출 — 내부적으로 asyncio.run()으로 감싼 동기 메서드(명세 §2.2).
+
+        ``config.timeout_seconds``로 전체 호출(스트림 소비 포함)을 강제
+        타임아웃한다 — 초과 시 :class:`DataValidationError`(SDK 서브프로세스가
+        멎어도 호출자가 무한정 블록되지 않게 한다).
+        """
+        return asyncio.run(self._complete_text_with_timeout(system_prompt, user_prompt))
+
+    async def _complete_text_with_timeout(
+        self, system_prompt: str, user_prompt: str
+    ) -> tuple[str, LlmCallMetadata]:
+        try:
+            return await asyncio.wait_for(
+                self._complete_text_async(system_prompt=system_prompt, user_prompt=user_prompt),
+                timeout=self._config.timeout_seconds,
+            )
+        except TimeoutError as err:
+            raise DataValidationError(
+                f"LLM 호출이 timeout_seconds={self._config.timeout_seconds}초 안에 "
+                "끝나지 않았습니다."
+            ) from err
 
     async def _complete_text_async(
         self, *, system_prompt: str, user_prompt: str

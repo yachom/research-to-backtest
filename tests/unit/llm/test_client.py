@@ -21,6 +21,7 @@ os.environ을 직접 스냅샷·복원한다 — "누가 어떻게 값을 바꿨
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
@@ -289,3 +290,34 @@ def test_observed_model_defaults_to_config_model_when_no_assistant_message(
 
     _, metadata = _client(tmp_path).complete_text(system_prompt="sys", user_prompt="u")
     assert metadata.model == _config().model
+
+
+def test_call_exceeding_timeout_seconds_raises_data_validation_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """config.timeout_seconds가 asyncio.wait_for로 실제 강제되는지 검증한다."""
+
+    async def _slow_query(
+        *, prompt: str, options: ClaudeAgentOptions | None = None, transport: Any = None
+    ) -> AsyncIterator[Any]:
+        await asyncio.sleep(0.2)
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=200,
+            duration_api_ms=190,
+            is_error=False,
+            num_turns=1,
+            session_id="sess-slow",
+            result="{}",
+            usage=None,
+            total_cost_usd=None,
+        )
+
+    monkeypatch.setattr(client_module, "query", _slow_query)
+
+    settings = _settings(tmp_path, claude_code_oauth_token=_FAKE_OAUTH_TOKEN)
+    fast_timeout_config = LlmConfig(timeout_seconds=0.01)
+    client = ClaudeAgentSdkClient(fast_timeout_config, settings)
+
+    with pytest.raises(DataValidationError, match="timeout_seconds"):
+        client.complete_text(system_prompt="sys", user_prompt="u")

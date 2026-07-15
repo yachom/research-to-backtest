@@ -32,8 +32,8 @@ class LlmConfig(BaseModel):
     - ``max_turns``: ``ClaudeAgentOptions.max_turns``에 그대로 전달한다.
     - ``max_attempts``: JSON 파싱·검증 실패 재시도 상한(core/llm/json_call.py).
       API 호출 자체의 오류(인증·요금·전송)는 이 재시도 대상이 아니다.
-    - ``timeout_seconds``: 호출 타임아웃(초) — 참고용으로 보관(SDK 타임아웃은
-      별도 설정 경로를 쓰므로 클라이언트가 직접 강제하지 않을 수 있다).
+    - ``timeout_seconds``: 호출 타임아웃(초) — ``ClaudeAgentSdkClient``가
+      ``asyncio.wait_for``로 전체 호출(스트림 소비 포함)에 직접 강제한다.
     """
 
     model_config = ConfigDict(extra="forbid")
