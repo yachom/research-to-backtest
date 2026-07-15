@@ -264,16 +264,83 @@ def try_load_backtest_interpretation(store: RunStore) -> BacktestInterpretation 
         return None
 
 
-def load_evidence_manifest_ids(store: RunStore) -> list[str]:
-    """evidence_manifest.json의 evidence_id 목록(화면③ 후보 표시용, 없으면 빈 리스트)."""
+@dataclass(frozen=True)
+class EvidenceEntry:
+    """evidence_manifest.json 1건의 사람이 읽는 요약 (docs/specs/W3e-ui-ux.md F4).
+
+    ``EvidencePackageStore.save``\\ 가 쓰는 필드(evidence_id·category·statement·
+    significance_score)를 그대로 옮긴다 — manifest에 없는 필드는 빈 값/None으로
+    채운다(구버전 manifest 호환).
+    """
+
+    evidence_id: str
+    category: str
+    statement: str
+    significance_score: float | None
+
+
+def load_evidence_entries(store: RunStore) -> list[EvidenceEntry]:
+    """evidence_manifest.json을 :class:`EvidenceEntry` 목록으로 파싱한다 (F4).
+
+    ``research.evidence.store.EvidencePackageStore``\\ 가 쓰는 형식
+    (``{"evidence": [{"evidence_id", "category", "statement",
+    "significance_score"}, ...]}``)을 그대로 읽는다. 파일이 없거나 형식이
+    올바르지 않으면 빈 리스트(화면③④가 "아직 없음"으로 처리하는 것과 동일한
+    신호). 개별 항목에 ``category``\\ ·``statement``\\ ·``significance_score``가
+    없어도(구버전 manifest) 건너뛰지 않고 빈 값/None으로 채워 넣는다 —
+    ``evidence_id``\\ 만 있으면 유효한 항목이다.
+    """
     path = store.run_dir / "evidence_manifest.json"
     if not path.exists():
         return []
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        return [str(item["evidence_id"]) for item in raw["evidence"]]
+        items = raw["evidence"]
     except (KeyError, TypeError, json.JSONDecodeError):
         return []
+    entries: list[EvidenceEntry] = []
+    for item in items:
+        if not isinstance(item, dict) or "evidence_id" not in item:
+            continue
+        score = item.get("significance_score")
+        entries.append(
+            EvidenceEntry(
+                evidence_id=str(item["evidence_id"]),
+                category=str(item.get("category") or ""),
+                statement=str(item.get("statement") or ""),
+                significance_score=float(score) if isinstance(score, int | float) else None,
+            )
+        )
+    return entries
+
+
+def evidence_label(entry: EvidenceEntry) -> str:
+    """근거 1건을 사람이 읽는 라벨로 바꾼다 — multiselect·목록 표시 공용 (F4).
+
+    형식: ``"[카테고리] statement (유의도 0.91 · evidence_id)"``. ``statement``는
+    60자로 축약한다. 구버전 manifest 호환: ``statement``가 없으면(빈 문자열)
+    구성할 문장이 없으므로 ``evidence_id``\\ 만 반환한다. ``category``\\ ·
+    ``significance_score``가 없어도 나머지 조각만으로 라벨을 구성한다(부재
+    필드 폴백). 저장되는 값은 이 라벨이 아니라 항상 ``evidence_id``\\ 다 —
+    이 함수는 표시(``format_func``)에만 쓰인다.
+    """
+    if not entry.statement:
+        return entry.evidence_id
+    statement = entry.statement
+    if len(statement) > 60:
+        statement = statement[:60].rstrip() + "…"
+    category_part = f"[{entry.category}] " if entry.category else ""
+    score_part = f"{entry.significance_score:.2f}" if entry.significance_score is not None else "-"
+    return f"{category_part}{statement} (유의도 {score_part} · {entry.evidence_id})"
+
+
+def load_evidence_manifest_ids(store: RunStore) -> list[str]:
+    """evidence_manifest.json의 evidence_id 목록(화면③ 후보 표시용, 없으면 빈 리스트).
+
+    :func:`load_evidence_entries`\\ 에 위임한다(F4) — id만 필요한 호출부는
+    그대로 이 함수를 쓴다.
+    """
+    return [entry.evidence_id for entry in load_evidence_entries(store)]
 
 
 def load_backtest_result(store: RunStore) -> BacktestResult | None:
@@ -1384,6 +1451,7 @@ __all__ = [
     "HYPOTHESIS_DECISION_OPTIONS",
     "CandidateGenerationResult",
     "CreateRunResult",
+    "EvidenceEntry",
     "PrepExecutionResult",
     "PrepPlan",
     "PrepStep",
@@ -1394,11 +1462,13 @@ __all__ = [
     "create_run",
     "ensure_candidates_stage",
     "ensure_data_ready",
+    "evidence_label",
     "execute_data_preparation",
     "generate_candidates",
     "generate_strategy_draft_action",
     "load_backtest_result",
     "load_daily_portfolio",
+    "load_evidence_entries",
     "load_evidence_manifest_ids",
     "load_robustness_report",
     "load_strategy_name",

@@ -111,49 +111,103 @@ def _lock_banner(availability: state.ScreenAvailability) -> bool:
     return False
 
 
+def _evidence_format_func(
+    entries_by_id: dict[str, actions.EvidenceEntry],
+) -> Callable[[str], str]:
+    """evidence_id → 사람이 읽는 라벨 매핑 함수를 만든다 (docs/specs/W3e-ui-ux.md F4).
+
+    ``st.multiselect``\\ 의 ``format_func``\\ 로 쓴다 — 표시만 라벨로 바뀌고
+    위젯이 실제로 값으로 다루고 저장하는 것은 여전히 evidence_id다(모델 계약
+    불변). manifest에 없는 id(방어적 폴백)는 그대로 보여준다.
+    """
+
+    def _fmt(evidence_id: str) -> str:
+        entry = entries_by_id.get(evidence_id)
+        return actions.evidence_label(entry) if entry is not None else evidence_id
+
+    return _fmt
+
+
 # ---------------------------------------------------------------------------
-# 사이드바 — run 선택·생성·상태 배지 (§3.1)
+# 사이드바 — run 선택·상태 배지·화면 네비게이션 (§3.1, docs/specs/W3e-ui-ux.md F1·F2·F5)
 # ---------------------------------------------------------------------------
 
 
 #: 다음 rerun에서 사이드바 selectbox가 선택할 run_id (위젯 키가 아닌 일반 세션 키).
 #: 위젯 key("sidebar_run_select")는 위젯 생성 후 같은 실행에서 대입이 금지되므로
-#: (StreamlitAPIException), run 생성 경로는 이 키에 적어두고 st.rerun()만 한다 —
-#: 사이드바가 다음 실행에서 위젯을 만들기 **전에** 이 값을 위젯 key로 옮긴다.
+#: (StreamlitAPIException), run 생성 경로는 이 키에 적어두기만 하고 호출부가
+#: 다른 예약과 함께 한 번만 st.rerun()한다 — 사이드바가 다음 실행에서 위젯을
+#: 만들기 **전에** 이 값을 위젯 key로 옮긴다.
 _PENDING_RUN_SELECT_KEY = "_pending_run_select_run_id"
+
+#: 다음 rerun에서 네비게이션 radio(``NAV_WIDGET_KEY``)가 선택할 화면 인덱스(0~6) —
+#: 위와 동일한 펜딩 패턴(F3, U1a/U1b와 같은 "위젯 생성 후 직접 대입 금지" 회귀
+#: 위험 회피). 저장·생성 성공 직후 다음 화면 자동 전진에 쓴다.
+_PENDING_NAV_KEY = "_pending_nav_screen"
+
+#: 네비게이션 radio의 위젯 key (F2) — session_state에 남아 rerun 후에도 선택이
+#: 보존된다(st.tabs와 달리 첫 화면으로 리셋되지 않는다, U1a 해결).
+NAV_WIDGET_KEY = "nav_screen"
 
 
 def _select_run_on_next_rerun(run_id: str) -> None:
-    """run 생성 직후 호출 — 다음 rerun에서 해당 run이 선택되게 예약하고 재실행한다."""
+    """다음 rerun에서 사이드바가 ``run_id``\\ 를 선택하게 예약한다(F1, run 생성 직후 호출).
+
+    다른 예약(:func:`_goto_screen_on_next_rerun`)과 묶어 호출부가 한 번만
+    ``st.rerun()``\\ 하도록 여기서는 rerun을 호출하지 않는다.
+    """
     st.session_state[_PENDING_RUN_SELECT_KEY] = run_id
-    st.rerun()
+
+
+def _goto_screen_on_next_rerun(screen_index: int) -> None:
+    """다음 rerun에서 네비게이션이 ``screen_index``\\ (0~6)를 가리키게 예약한다(F3).
+
+    위젯 key(``NAV_WIDGET_KEY``)는 위젯 생성 후 대입이 금지되므로(U1b와 동일한
+    StreamlitAPIException 회귀 위험) run 선택과 동일한 펜딩 패턴을 쓴다 — 값은
+    일반 세션 키에 적어두고, :func:`render_nav`\\ 가 위젯 생성 **전**에 옮긴다.
+    """
+    st.session_state[_PENDING_NAV_KEY] = screen_index
+
+
+def _toast_advance(screen_index: int) -> None:
+    """저장·생성 성공 직후 다음 화면 자동 전진을 예약하고 안내 토스트를 띄운다(F3, U3)."""
+    _goto_screen_on_next_rerun(screen_index)
+    st.toast(f"저장됨 — 화면 {screen_index + 1}로 이동")
 
 
 def render_sidebar(settings: Settings) -> str | None:
-    """사이드바(run 선택 + 새 run 생성 + 상태 배지)를 그리고 선택된 run_id를 반환한다."""
+    """사이드바(run 선택 + 상태 배지 + 화면① 이동 안내)를 그리고 선택된 run_id를 반환한다.
+
+    새 run 생성 폼은 화면①에만 있다(U4/F5 — 생성 진입점 이중화 제거). 여기서는
+    화면①로 이동하는 버튼만 제공한다.
+    """
     st.sidebar.header("실행(run) 관리")
     summaries = state.scan_runs(settings)
+    summary_by_id = {s.run_id: s for s in summaries}
 
     selected_run_id: str | None = None
     if summaries:
-        options = ["(선택 안 함)"] + [
-            f"{s.run_id} — {s.company} [{state.PIPELINE_STATE_LABELS[s.current_state]}]"
-            for s in summaries
-        ]
-        # 예약된 선택(run 생성 직후)을 위젯 생성 전에 적용한다 — run_id 접두 매칭이라
-        # 라벨 형식 변화에 안전하다.
+        options: list[str | None] = [None, *summary_by_id]
+
+        def _format_run_option(rid: str | None) -> str:
+            if rid is None:
+                return "(선택 안 함)"
+            summary = summary_by_id[rid]
+            label = state.PIPELINE_STATE_LABELS[summary.current_state]
+            return f"{rid} — {summary.company} [{label}]"
+
+        # 예약된 선택(run 생성 직후)을 위젯 생성 전에 적용한다(F1) — 옵션 값
+        # 자체가 불변 run_id이므로 상태 전이로 라벨이 바뀌어도 선택이 풀리지
+        # 않는다(U1b: 과거엔 라벨 문자열이 옵션 값이라 상태가 바뀌면 옵션이
+        # 사라져 선택이 index 0으로 되돌아갔다).
         pending = st.session_state.pop(_PENDING_RUN_SELECT_KEY, None)
-        if pending is not None:
-            for option in options[1:]:
-                if option.startswith(f"{pending} —"):
-                    st.session_state["sidebar_run_select"] = option
-                    break
-        choice = st.sidebar.selectbox("run 선택", options, key="sidebar_run_select")
-        if choice != "(선택 안 함)":
-            idx = options.index(choice) - 1
-            selected_run_id = summaries[idx].run_id
+        if pending is not None and pending in summary_by_id:
+            st.session_state["sidebar_run_select"] = pending
+        selected_run_id = st.sidebar.selectbox(
+            "run 선택", options, format_func=_format_run_option, key="sidebar_run_select"
+        )
     else:
-        st.sidebar.info("등록된 run이 없습니다. 아래에서 새로 생성하세요.")
+        st.sidebar.info("등록된 run이 없습니다. 화면①에서 새로 생성하세요.")
 
     if selected_run_id is not None:
         store = RunStore(settings.outputs_dir, selected_run_id)
@@ -168,23 +222,34 @@ def render_sidebar(settings: Settings) -> str | None:
             )
             st.sidebar.caption(f"다음 단계: {state.NEXT_STEP_HINTS[run_state.current_state]}")
 
-    with st.sidebar.expander("새 run 생성", expanded=not summaries):
-        company = st.text_input("기업명 또는 종목코드", key="sidebar_new_company")
-        as_of = st.date_input("분석 기준일", value=date.today(), key="sidebar_new_as_of")
-        if st.button("run 생성", key="sidebar_create_run_btn"):
-            if not company.strip():
-                st.sidebar.error("기업명을 입력하세요.")
-            else:
-                outcome = _run_action(
-                    lambda: actions.create_run(settings, company=company, as_of=as_of)
-                )
-                if isinstance(outcome, actions.ResolveFailure):
-                    _render_resolve_failure(outcome)
-                elif outcome is not None:
-                    st.sidebar.success(f"run 생성 완료: {outcome.run_id}")
-                    _select_run_on_next_rerun(outcome.run_id)
+    st.sidebar.divider()
+    st.sidebar.caption("새 run은 화면①에서 생성하세요.")
+    if st.sidebar.button("① 화면으로 이동", key="sidebar_goto_screen1_btn"):
+        _goto_screen_on_next_rerun(0)
+        st.rerun()
 
     return selected_run_id
+
+
+def render_nav() -> int:
+    """화면 네비게이션(사이드바 radio)을 그리고 선택된 화면 인덱스(0~6)를 반환한다(F2).
+
+    ``st.tabs``\\ 는 rerun마다 첫 탭으로 리셋되어(U1a) 저장 버튼이 끝날 때마다
+    호출하는 ``st.rerun()``\\ 이 항상 화면①로 떨어뜨렸다. radio는 위젯 값이
+    session_state(``NAV_WIDGET_KEY``)에 남아 rerun 후에도 선택이 유지된다.
+    잠긴 화면도 옵션에는 그대로 노출한다(게이트 가시성 유지) — 실제 잠금
+    배너는 각 ``render_screenN``\\ 이 그린다(:func:`_lock_banner`).
+    """
+    pending = st.session_state.pop(_PENDING_NAV_KEY, None)
+    if pending is not None:
+        st.session_state[NAV_WIDGET_KEY] = pending
+    st.sidebar.divider()
+    return st.sidebar.radio(
+        "화면 이동",
+        options=range(len(state.SCREEN_TITLES)),
+        format_func=lambda i: state.SCREEN_TITLES[i],
+        key=NAV_WIDGET_KEY,
+    )
 
 
 def _render_resolve_failure(failure: actions.ResolveFailure) -> None:
@@ -208,10 +273,12 @@ def _render_resolve_failure(failure: actions.ResolveFailure) -> None:
 
 
 def _create_run_and_rerun(settings: Settings, company: str, as_of: date) -> None:
-    """create_run을 호출해 성공하면 사이드바 선택을 갱신하고 재실행한다.
+    """create_run을 호출해 성공하면 사이드바 선택·네비게이션을 갱신하고 재실행한다.
 
     화면①의 직접 제출·준비 완료 후 자동 재시도(명세 §2 "run 생성을 자동
-    재시도해 화면 ②로 이어지게 한다") 두 경로가 이 헬퍼를 공유한다.
+    재시도해 화면 ②로 이어지게 한다") 두 경로가 이 헬퍼를 공유한다. run 선택
+    예약(F1)과 화면② 자동 전진 예약(F3, docs/specs/W3e-ui-ux.md)을 한 rerun에
+    함께 적용한다.
     """
     outcome = _run_action(lambda: actions.create_run(settings, company=company, as_of=as_of))
     if isinstance(outcome, actions.ResolveFailure):
@@ -219,6 +286,8 @@ def _create_run_and_rerun(settings: Settings, company: str, as_of: date) -> None
     elif outcome is not None:
         st.success(f"run 생성 완료: {outcome.run_id}")
         _select_run_on_next_rerun(outcome.run_id)
+        _toast_advance(1)
+        st.rerun()
 
 
 def _attempt_create_run(settings: Settings, company: str, as_of: date) -> None:
@@ -437,6 +506,7 @@ def render_screen2(settings: Settings, store: RunStore, run_state: RunState) -> 
             if outcome is not None:
                 elapsed = time.monotonic() - generate_start
                 st.success(f"AI 분석 후보 생성 완료 ({elapsed:.0f}초).")
+                _toast_advance(2)
                 st.rerun()
     elif availability.reason:
         st.info(availability.reason)
@@ -447,6 +517,8 @@ def render_screen2(settings: Settings, store: RunStore, run_state: RunState) -> 
 
     _ai_caption()
     run_id = run_state.run_id
+    entries_by_id = {e.evidence_id: e for e in actions.load_evidence_entries(store)}
+    fmt_evidence = _evidence_format_func(entries_by_id)
     categories: list[tuple[str, str]] = [
         ("financial_findings", "재무 변화 후보"),
         ("business_findings", "사업 변화 후보"),
@@ -464,9 +536,10 @@ def render_screen2(settings: Settings, store: RunStore, run_state: RunState) -> 
                 st.caption("해당 없음")
             for finding in findings:
                 st.markdown(f"- {finding.statement}")
+                evidence_display = ", ".join(fmt_evidence(eid) for eid in finding.evidence_ids)
                 st.caption(
                     f"category={finding.category} · source_type={finding.source_type} · "
-                    f"confidence={finding.confidence:.2f} · evidence_ids={finding.evidence_ids}"
+                    f"confidence={finding.confidence:.2f} · 근거: {evidence_display}"
                 )
                 if finding.limitations:
                     st.caption(f"한계: {'; '.join(finding.limitations)}")
@@ -485,9 +558,11 @@ def render_screen2(settings: Settings, store: RunStore, run_state: RunState) -> 
     with st.expander(f"변수 간 관계 후보 ({len(analysis.relationship_candidates)}건)"):
         for rel in analysis.relationship_candidates:
             st.markdown(f"- {rel.cause_or_signal} → {rel.outcome}: {rel.proposed_mechanism}")
+            evidence_display = ", ".join(fmt_evidence(eid) for eid in rel.evidence_ids)
+            counter_display = ", ".join(fmt_evidence(eid) for eid in rel.counter_evidence_ids)
             st.caption(
-                f"confidence={rel.confidence:.2f} · evidence_ids={rel.evidence_ids} · "
-                f"counter_evidence_ids={rel.counter_evidence_ids} · "
+                f"confidence={rel.confidence:.2f} · 근거: {evidence_display} · "
+                f"반대 근거: {counter_display} · "
                 f"measurable_variables={rel.measurable_variables}"
             )
             c1, c2 = st.columns(2)
@@ -529,7 +604,9 @@ def render_screen3(store: RunStore, run_state: RunState) -> None:
 
     run_id = run_state.run_id
     existing = actions.try_load_analyst_view(store)
-    evidence_ids = actions.load_evidence_manifest_ids(store)
+    evidence_entries = actions.load_evidence_entries(store)
+    evidence_ids = [e.evidence_id for e in evidence_entries]
+    fmt_evidence = _evidence_format_func({e.evidence_id: e for e in evidence_entries})
     carry_selected = st.session_state.get(f"scr2_carry_selected__{run_id}", [])
     carry_rejected = st.session_state.get(f"scr2_carry_rejected__{run_id}", [])
 
@@ -562,6 +639,7 @@ def render_screen3(store: RunStore, run_state: RunState) -> None:
         "선택한 근거",
         options=evidence_ids,
         default=[e for e in default_selected if e in evidence_ids],
+        format_func=fmt_evidence,
         key=f"scr3_selected__{run_id}",
         disabled=disabled,
     )
@@ -569,6 +647,7 @@ def render_screen3(store: RunStore, run_state: RunState) -> None:
         "제외한 근거",
         options=evidence_ids,
         default=[e for e in default_rejected if e in evidence_ids],
+        format_func=fmt_evidence,
         key=f"scr3_rejected__{run_id}",
         disabled=disabled,
     )
@@ -584,7 +663,10 @@ def render_screen3(store: RunStore, run_state: RunState) -> None:
         for eid in rejected_evidence_ids:
             prior = existing.rejected_evidence_reasons.get(eid, "") if existing else ""
             rejected_reasons[eid] = st.text_input(
-                f"- {eid}", value=prior, key=f"scr3_rej_reason_{eid}__{run_id}", disabled=disabled
+                f"- {fmt_evidence(eid)}",
+                value=prior,
+                key=f"scr3_rej_reason_{eid}__{run_id}",
+                disabled=disabled,
             )
     interpretation = st.text_area(
         "해석",
@@ -638,6 +720,7 @@ def render_screen3(store: RunStore, run_state: RunState) -> None:
             success_message="분석 관점을 저장했습니다.",
         )
         if outcome is not None:
+            _toast_advance(3)
             st.rerun()
 
 
@@ -655,7 +738,9 @@ def render_screen4(store: RunStore, run_state: RunState) -> None:
     run_id = run_state.run_id
     existing = actions.try_load_human_hypothesis(store)
     analyst_view = actions.try_load_analyst_view(store)
-    evidence_ids = actions.load_evidence_manifest_ids(store)
+    evidence_entries = actions.load_evidence_entries(store)
+    evidence_ids = [e.evidence_id for e in evidence_entries]
+    fmt_evidence = _evidence_format_func({e.evidence_id: e for e in evidence_entries})
 
     default_id = existing.hypothesis_id if existing else f"hyp-{run_id}"
     default_view_id = (
@@ -723,6 +808,7 @@ def render_screen4(store: RunStore, run_state: RunState) -> None:
         "근거",
         options=evidence_ids,
         default=[e for e in default_evidence if e in evidence_ids],
+        format_func=fmt_evidence,
         key=f"scr4_evidence__{run_id}",
         disabled=disabled,
     )
@@ -802,6 +888,7 @@ def render_screen4(store: RunStore, run_state: RunState) -> None:
                         success_message="투자 가설을 승인했습니다.",
                     )
                     if outcome is not None:
+                        _toast_advance(4)
                         st.rerun()
 
 
@@ -970,6 +1057,7 @@ def render_screen5(settings: Settings, store: RunStore, run_state: RunState) -> 
             success_message="전략을 승인했습니다.",
         )
         if approve_outcome is not None:
+            _toast_advance(5)
             st.rerun()
 
 
@@ -1013,6 +1101,7 @@ def render_screen6(settings: Settings, store: RunStore, run_state: RunState) -> 
                     success_message="백테스트 완료.",
                 )
             if outcome is not None:
+                _toast_advance(6)
                 st.rerun()
 
     result = actions.load_backtest_result(store)
