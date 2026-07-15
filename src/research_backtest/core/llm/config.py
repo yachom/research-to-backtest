@@ -42,7 +42,7 @@ class LlmConfig(BaseModel):
     model: str = "claude-haiku-4-5-20251001"
     max_turns: int = Field(default=1, ge=1)
     max_attempts: int = Field(default=3, ge=1)
-    timeout_seconds: float = Field(default=120.0, gt=0)
+    timeout_seconds: float = Field(default=360.0, gt=0)  # 출력 긴 호출 실측 반영 (2026-07-15)
 
 
 def load_llm_config(path: Path = DEFAULT_LLM_CONFIG_PATH) -> LlmConfig:

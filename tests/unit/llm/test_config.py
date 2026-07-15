@@ -21,7 +21,7 @@ def test_repo_llm_yaml_loads_with_expected_defaults() -> None:
     assert config.model == "claude-haiku-4-5-20251001"
     assert config.max_turns == 1
     assert config.max_attempts == 3
-    assert config.timeout_seconds == 120.0
+    assert config.timeout_seconds == 360.0  # 출력 긴 호출 실측 반영 (2026-07-15)
 
 
 def test_load_llm_config_missing_file_raises_config_error(tmp_path: Path) -> None:
@@ -68,7 +68,7 @@ def test_load_llm_config_applies_defaults_for_partial_file(tmp_path: Path) -> No
     assert config.provider == "claude_agent_sdk"
     assert config.max_turns == 1
     assert config.max_attempts == 3
-    assert config.timeout_seconds == 120.0
+    assert config.timeout_seconds == 360.0  # 출력 긴 호출 실측 반영 (2026-07-15)
 
 
 def test_llm_config_model_forbids_extra_fields_directly() -> None:

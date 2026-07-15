@@ -18,7 +18,13 @@ from rich.table import Table
 from research_backtest import __version__
 from research_backtest.app.commands.backtest_cmd import register as register_backtest
 from research_backtest.app.commands.data_pipeline import register as register_data_pipeline
-from research_backtest.app.commands.hitl_flow import register as register_hitl_flow
+from research_backtest.app.commands.hitl_flow import (
+    _create_run_impl,
+    run_generate_candidates,
+)
+from research_backtest.app.commands.hitl_flow import (
+    register as register_hitl_flow,
+)
 from research_backtest.core.config import (
     Settings,
     get_settings,
@@ -86,16 +92,7 @@ console = Console()
 KST = ZoneInfo("Asia/Seoul")
 
 RESOLVE_FAILURE_EXIT_CODE = 1
-NOT_IMPLEMENTED_EXIT_CODE = 2
 CONFIG_ERROR_EXIT_CODE = 3
-
-
-def _not_implemented(milestone: str) -> None:
-    console.print(
-        f"[yellow]아직 구현되지 않은 명령입니다 — {milestone}에서 구현 예정"
-        f" (docs/MILESTONES.md 참고).[/yellow]"
-    )
-    raise typer.Exit(code=NOT_IMPLEMENTED_EXIT_CODE)
 
 
 @app.command()
@@ -614,8 +611,22 @@ def research(
     as_of_date: Annotated[str, typer.Option("--as-of-date", help="분석 기준일 (YYYY-MM-DD)")],
     lookback_years: Annotated[int, typer.Option("--lookback-years", help="분석 대상 연수")] = 5,
 ) -> None:
-    """기업분석 보고서와 투자 가설을 생성한다."""
-    _not_implemented("Milestone C1")
+    """새 run을 등록하고 AI 분석 후보·가설 후보를 생성한다 (README §26.5, 명세 W3b §2.3).
+
+    v2 HITL 흐름의 시작점이다 — 기존 run을 찾지 않고 항상 새 run을 만든 뒤
+    ``generate-candidates`` 로직(Evidence 빌드 + CandidateAnalysis·
+    HypothesisCandidate 생성)을 이어서 실행한다. 이후 단계는 사용자가 작성하는
+    ``create-analyst-view``다. 종료 코드는 ``generate-candidates``와 같다
+    (0 성공 / 1 검증·데이터 / 3 설정·인증 / 4 게이트).
+    """
+    as_of = _parse_iso_date_option(as_of_date, "--as-of-date")
+    if as_of is None:
+        raise typer.BadParameter("--as-of-date는 필수입니다.")
+
+    settings = get_settings()
+    run_id = _create_run_impl(company, as_of, settings)
+    run_generate_candidates(settings, run_id, lookback_years=lookback_years)
+    console.print(f"다음 단계: create-analyst-view --run-id {run_id}")
 
 
 def main() -> None:

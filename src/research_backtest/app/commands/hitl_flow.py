@@ -42,7 +42,9 @@ from research_backtest.core.hitl.models import (
     AIUsageRecord,
     AnalystView,
     BacktestInterpretation,
+    CandidateAnalysis,
     HumanInvestmentHypothesis,
+    HypothesisCandidate,
     HypothesisStatus,
     RunManifest,
     StrategyReview,
@@ -62,7 +64,7 @@ from research_backtest.core.hitl.validation import (
     validate_analyst_view,
     validate_hypothesis,
 )
-from research_backtest.core.llm import create_llm_client, load_llm_config
+from research_backtest.core.llm import LlmCallMetadata, create_llm_client, load_llm_config
 from research_backtest.core.market.collector import (
     DAILY_FILENAME,
     market_calendar_path,
@@ -73,6 +75,18 @@ from research_backtest.quant.strategy.compiler import compile_strategy
 from research_backtest.quant.strategy.draft import DEFAULT_PROMPTS_DIR, draft_strategy
 from research_backtest.quant.strategy.registry import resolve_indicator
 from research_backtest.quant.strategy.schema import parse_strategy_spec
+from research_backtest.research.candidates.generator import (
+    CANDIDATE_ANALYSIS_PROMPT_NAME,
+    HYPOTHESIS_CANDIDATE_PROMPT_NAME,
+    PROMPTS_DIR,
+    generate_candidate_analysis,
+    generate_hypothesis_candidates,
+)
+from research_backtest.research.evidence import (
+    EvidencePackage,
+    EvidencePackageStore,
+    build_financial_evidence,
+)
 
 console = Console()
 
@@ -470,6 +484,17 @@ def create_run(
         raise typer.BadParameter("--as-of-date는 필수입니다.")
 
     settings = get_settings()
+    _create_run_impl(company, as_of, settings)
+
+
+def _create_run_impl(company: str, as_of: date, settings: Settings) -> str:
+    """run 생성 로직 — ``create-run``과 ``research``가 공유한다 (명세 W3b §2.2·§2.3).
+
+    기업 식별 → 상장 확인 → 데이터 준비 검사 → RunManifest·RunState 저장까지
+    수행하고 발급된 ``run_id``를 반환한다. 표준 출력(run 생성 완료·매니페스트
+    경로·상태 2줄)도 이 함수가 낸다 — ``create_run``의 관측 가능한 출력·동작은
+    추출 전과 동일하다.
+    """
     corp = _resolve_corp(company, settings)
 
     if corp.stock_code is None:
@@ -501,6 +526,7 @@ def create_run(
     console.print(f"[green]run 생성 완료: {run_id}[/green]")
     console.print(f"매니페스트 경로: {manifest_path}")
     _print_status_footer(run_id, run_state)
+    return run_id
 
 
 # ---------------------------------------------------------------------------
@@ -818,23 +844,217 @@ def submit_interpretation(
 
 def generate_candidates(
     run_id: Annotated[str, typer.Option("--run-id", help="실행 ID")],
+    lookback_years: Annotated[int, typer.Option("--lookback-years", help="Evidence 조회 연수")] = 5,
 ) -> None:
-    """AI 분석 후보 생성 — 상태 인지형 스텁 (§5.7). 실제 구현은 C1'."""
+    """AI 분석 후보·가설 후보를 생성한다 (C1' 실구현, 명세 W3b §2.2).
+
+    Evidence Store를 빌드해 저장한 뒤 LLM(Haiku·구독 OAuth)으로 CandidateAnalysis와
+    HypothesisCandidate 목록을 생성한다. 상태 정책: DATA_READY=정상 경로(끝에
+    CANDIDATE_ANALYSIS_READY→AWAITING_ANALYST_VIEW로 전진), 후보가 이미 있는
+    상태(CANDIDATE_ANALYSIS_READY·AWAITING_ANALYST_VIEW)=재생성(전이 없음),
+    ANALYST_VIEW_APPROVED 이상=거부(exit 4, 새 run 안내). 종료 코드: 3 설정·인증
+    오류, 1 검증·데이터 오류(재시도 소진 포함), 4 게이트 차단.
+    """
     settings = get_settings()
+    run_generate_candidates(settings, run_id, lookback_years=lookback_years)
+
+
+def run_generate_candidates(settings: Settings, run_id: str, *, lookback_years: int) -> None:
+    """generate-candidates 코어 — ``research`` CLI도 이 함수를 재사용한다 (명세 W3b §2.2·§2.3).
+
+    상태 정책·Evidence 빌드·LLM 후보 생성·AIUsageRecord 2건 기록·상태 전이·출력을
+    모두 담당한다. 예외는 종료 코드로 통일한다(ConfigError→3, FileNotFoundError·
+    DataValidationError→1, ApprovalGateError→4).
+    """
     store = RunStore(settings.outputs_dir, run_id)
     run_state = _load_run_state_or_exit(store)
 
-    current_idx = FORWARD_ORDER.index(run_state.current_state)
-    ready_idx = FORWARD_ORDER.index(PipelineState.CANDIDATE_ANALYSIS_READY)
-    if current_idx >= ready_idx:
-        console.print(
-            f"[yellow]이미 생성된 실행입니다(현재 상태: {run_state.current_state.value}).[/yellow]"
+    with _validation_guard():
+        manifest = store.load_run_manifest()
+
+    with _gate_guard():
+        _ensure_candidates_stage(run_state)
+
+    regenerate = run_state.current_state in {
+        PipelineState.CANDIDATE_ANALYSIS_READY,
+        PipelineState.AWAITING_ANALYST_VIEW,
+    }
+    if regenerate:
+        console.print("[yellow]이미 생성된 후보가 있어 재생성합니다 — 상태 전이 없음.[/yellow]")
+
+    as_of = date.fromisoformat(manifest.as_of_date)
+
+    try:
+        package = build_financial_evidence(
+            manifest.corp_code,
+            as_of=as_of,
+            data_dir=settings.data_dir,
+            lookback_years=lookback_years,
         )
-    console.print(
-        "[yellow]아직 구현되지 않은 명령입니다 — C1'에서 구현"
-        "(Evidence Store + CandidateAnalysis 생성기, docs/MILESTONES.md 참고).[/yellow]"
+        _, evidence_manifest_path = EvidencePackageStore(store.run_dir).save(package)
+        config = load_llm_config()
+        client = create_llm_client(config, settings)
+        analysis, analysis_meta = generate_candidate_analysis(
+            package, client=client, prompts_dir=PROMPTS_DIR, max_attempts=config.max_attempts
+        )
+        candidates, candidates_meta = generate_hypothesis_candidates(
+            package,
+            analysis,
+            client=client,
+            prompts_dir=PROMPTS_DIR,
+            max_attempts=config.max_attempts,
+        )
+    except ConfigError as err:
+        console.print(f"[red]LLM 설정·인증 오류: {err}[/red]")
+        raise typer.Exit(code=CONFIG_ERROR_EXIT_CODE) from err
+    except FileNotFoundError as err:
+        console.print(f"[red]{err}[/red]")
+        console.print("먼저 `r2b build-financials`로 재무 데이터셋을 생성하세요.")
+        raise typer.Exit(code=VALIDATION_ERROR_EXIT_CODE) from err
+    except DataValidationError as err:
+        console.print(f"[red]{err}[/red]")
+        raise typer.Exit(code=VALIDATION_ERROR_EXIT_CODE) from err
+
+    store.save_candidate_analysis(analysis)
+    store.save_hypothesis_candidates(candidates)
+    store.append_ai_usage(
+        _usage_record(
+            "candidate_analysis",
+            metadata=analysis_meta,
+            prompt_name=CANDIDATE_ANALYSIS_PROMPT_NAME,
+            ai_role="후보 정리",
+            input_ids=["evidence_package.json"],
+            output_ids=["candidate_analysis.json"],
+        )
     )
-    raise typer.Exit(code=NOT_IMPLEMENTED_EXIT_CODE)
+    store.append_ai_usage(
+        _usage_record(
+            "hypothesis_candidate",
+            metadata=candidates_meta,
+            prompt_name=HYPOTHESIS_CANDIDATE_PROMPT_NAME,
+            ai_role="가설 후보 제시",
+            input_ids=["candidate_analysis.json", "evidence_package.json"],
+            output_ids=["hypothesis_candidates.json"],
+        )
+    )
+
+    if not regenerate:
+        note = f"generate-candidates: model={analysis_meta.model}, 가설 후보 {len(candidates)}건"
+        run_state = advance(
+            run_state, PipelineState.CANDIDATE_ANALYSIS_READY, actor="system", note=note
+        )
+        run_state = advance(
+            run_state, PipelineState.AWAITING_ANALYST_VIEW, actor="system", note="후보 검토 대기"
+        )
+        store.save_run_state(run_state)
+
+    _print_candidates_summary(
+        package,
+        analysis,
+        candidates,
+        evidence_manifest_path=evidence_manifest_path,
+        analysis_meta=analysis_meta,
+        candidates_meta=candidates_meta,
+    )
+    _print_status_footer(run_id, run_state)
+
+
+def _ensure_candidates_stage(run_state: RunState) -> None:
+    """후보 재생성이 이후 산출물을 무효화하지 않도록 진입 상태를 검사한다 (명세 W3b §2.2).
+
+    ANALYST_VIEW_APPROVED 이상(분석 관점 승인 후)에서는 후보를 재생성하면 이미
+    작성된 관점·가설이 이전 후보에 기반하므로 어긋난다 — 거부하고 새 run을 안내한다.
+    """
+    if FORWARD_ORDER.index(run_state.current_state) >= FORWARD_ORDER.index(
+        PipelineState.ANALYST_VIEW_APPROVED
+    ):
+        raise ApprovalGateError(
+            f"이미 분석 관점 이후 단계({run_state.current_state.value})로 진행된 실행이라 "
+            "후보를 재생성할 수 없습니다 — 이후 산출물이 이전 후보와 어긋납니다. 새 run을 "
+            "만들어 다시 시작하세요(create-run 또는 research)."
+        )
+
+
+def _usage_record(
+    stage: str,
+    *,
+    metadata: LlmCallMetadata,
+    prompt_name: str,
+    ai_role: str,
+    input_ids: list[str],
+    output_ids: list[str],
+) -> AIUsageRecord:
+    """LLM 호출 1건의 AIUsageRecord를 만든다 (과제 2 증빙, 명세 W3b §0).
+
+    ``generated_by``/저작 필드는 코드가 주입한다 — ``model``은 실제 호출
+    메타데이터에서, ``prompt_version``은 "v1", ``human_review_required``는 True.
+    """
+    now = datetime.now(KST)
+    return AIUsageRecord(
+        usage_id=f"usage-{stage}-{now:%Y%m%d%H%M%S}",
+        stage=stage,
+        model=metadata.model,
+        prompt_name=prompt_name,
+        prompt_version="v1",
+        input_artifact_ids=input_ids,
+        output_artifact_ids=output_ids,
+        ai_role=ai_role,
+        human_review_required=True,
+        human_changes_summary=None,
+        created_at=now_kst_iso(),
+    )
+
+
+def _print_candidates_summary(
+    package: EvidencePackage,
+    analysis: CandidateAnalysis,
+    candidates: list[HypothesisCandidate],
+    *,
+    evidence_manifest_path: Path,
+    analysis_meta: LlmCallMetadata,
+    candidates_meta: LlmCallMetadata,
+) -> None:
+    """Evidence 요약·findings 카테고리별 건수·후보 제목·LLM 메타 테이블 출력 (명세 W3b §2.2)."""
+    console.print(
+        f"[green]Evidence {len(package.evidence)}건 저장 완료[/green] "
+        f"(매니페스트: {evidence_manifest_path})"
+    )
+
+    findings_table = Table(title="분석 후보 요약 (CandidateAnalysis)")
+    findings_table.add_column("항목")
+    findings_table.add_column("건수", justify="right")
+    for label, count in (
+        ("financial_findings", len(analysis.financial_findings)),
+        ("business_findings", len(analysis.business_findings)),
+        ("industry_findings", len(analysis.industry_findings)),
+        ("catalyst_candidates", len(analysis.catalyst_candidates)),
+        ("risk_candidates", len(analysis.risk_candidates)),
+        ("relationship_candidates", len(analysis.relationship_candidates)),
+        ("conflicting_evidence", len(analysis.conflicting_evidence)),
+        ("missing_information", len(analysis.missing_information)),
+    ):
+        findings_table.add_row(label, str(count))
+    console.print(findings_table)
+
+    console.print(f"가설 후보 {len(candidates)}건:")
+    for candidate in candidates:
+        console.print(f"  - {candidate.title}")
+
+    meta_table = Table(title="LLM 호출 메타 (모델·시도수·토큰)")
+    for column in ("stage", "model", "시도수", "input_tokens", "output_tokens"):
+        meta_table.add_column(column)
+    for stage, meta in (
+        ("candidate_analysis", analysis_meta),
+        ("hypothesis_candidate", candidates_meta),
+    ):
+        meta_table.add_row(
+            stage,
+            meta.model,
+            str(meta.num_attempts),
+            "-" if meta.input_tokens is None else str(meta.input_tokens),
+            "-" if meta.output_tokens is None else str(meta.output_tokens),
+        )
+    console.print(meta_table)
 
 
 def generate_strategy_draft(
