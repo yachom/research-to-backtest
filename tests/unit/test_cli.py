@@ -1,9 +1,12 @@
 """CLI 골격(README §26, 명세 CLI-integration §7) 스모크 테스트."""
 
+import pytest
 from typer.testing import CliRunner
 
 from research_backtest import __version__
-from research_backtest.app.cli import NOT_IMPLEMENTED_EXIT_CODE, app
+from research_backtest.app import cli
+from research_backtest.app.cli import app
+from research_backtest.core.config import Settings
 
 runner = CliRunner()
 
@@ -43,10 +46,13 @@ def test_version_command() -> None:
     assert __version__ in result.output
 
 
-def test_stub_command_exits_with_not_implemented() -> None:
-    """research는 아직 스텁(C1')이라 NOT_IMPLEMENTED로 종료한다 (명세 §0 비범위)."""
+def test_research_is_implemented_and_hits_config_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """research는 더 이상 스텁이 아니다 (C1' 실구현) — DART 키가 없으면 설정 오류(exit 3)."""
+    keyless = Settings(_env_file=None, dart_api_key="")
+    monkeypatch.setattr(cli, "get_settings", lambda: keyless)
     result = runner.invoke(
         app,
         ["research", "--company", "SK하이닉스", "--as-of-date", "2025-12-31"],
     )
-    assert result.exit_code == NOT_IMPLEMENTED_EXIT_CODE
+    # 스텁이면 exit 2였다 — 실구현은 run 생성 진입에서 DART 키를 요구해 exit 3.
+    assert result.exit_code == 3
