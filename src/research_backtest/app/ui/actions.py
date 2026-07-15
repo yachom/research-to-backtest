@@ -19,23 +19,44 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
+from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from research_backtest.core.config import Settings, load_dart_config
+from research_backtest.core.config import Settings, load_dart_config, load_market_config
 from research_backtest.core.dart.client import DartClient
 from research_backtest.core.dart.corp_code import corp_code_cache_dir, load_corp_code_registry
+from research_backtest.core.dart.disclosure_search import find_periodic_filings
+from research_backtest.core.dart.financial_api import (
+    MIN_SUPPORTED_YEAR,
+    CollectionSummary,
+    collect_financials,
+)
 from research_backtest.core.dart.models import ResolveResult
+from research_backtest.core.dart.xbrl_downloader import XbrlDownloadOutcome, download_xbrl_filings
 from research_backtest.core.exceptions import (
     ApprovalGateError,
+    ConfigError,
+    DartApiError,
+    DartTransportError,
     DataValidationError,
+    MarketAuthError,
     StrategyValidationError,
+    XbrlParseError,
 )
-from research_backtest.core.financials.pipeline import METRICS_FILENAME, financials_out_dir
+from research_backtest.core.financials.pipeline import (
+    METRICS_FILENAME,
+    FinancialBuildReport,
+    build_financial_datasets,
+    financials_out_dir,
+)
 from research_backtest.core.hitl.diff import diff_strategies
 from research_backtest.core.hitl.gates import (
     ensure_hypothesis_approved,
@@ -72,10 +93,14 @@ from research_backtest.core.hitl.validation import (
 from research_backtest.core.llm import LlmCallMetadata, create_llm_client, load_llm_config
 from research_backtest.core.market.collector import (
     DAILY_FILENAME,
+    MarketCollectionSummary,
+    collect_market_data,
     market_calendar_path,
     market_normalized_stock_dir,
 )
+from research_backtest.core.market.source import PykrxSource
 from research_backtest.core.models import DartCorporation
+from research_backtest.core.reconciliation.pipeline import ReconciliationReport, reconcile_all
 from research_backtest.quant.backtest.costs import BacktestConfig, load_backtest_config
 from research_backtest.quant.backtest.metrics import BacktestResult
 from research_backtest.quant.backtest.runner import (
@@ -398,6 +423,448 @@ def create_run(
     run_state = create_run_state(run_id, corp.corp_name, as_of.isoformat(), actor="user")
     store.save_run_state(run_state)
     return CreateRunResult(run_id=run_id, run_state=run_state)
+
+
+# ---------------------------------------------------------------------------
+# 화면① — 데이터 준비 오케스트레이션 (docs/specs/W3d-ui-data-prep.md §1~§3)
+# ---------------------------------------------------------------------------
+
+#: 재무 수집 1건당 보고서 종류 수 — Q1·반기·Q3·사업보고서(core.constants.ReprtCode 4종).
+#: §3 산식 "4(보고서)".
+_REPORT_TYPES_PER_YEAR = 4
+
+#: 재무 수집·빌드 기본 재무제표 구분 수 — collect_financials·build_financial_datasets의
+#: 기본 fs_divs(CFS, OFS) 길이. §3 산식 "2(scope)".
+_DEFAULT_SCOPES_COUNT = 2
+
+#: DART 요청 사이 최소 대기(초) — configs/dart.yaml request.min_interval_seconds 기본값
+#: (core.config.DartConfig.min_interval_seconds=0.1)과 동일. §3 산식 "dart min_interval 0.1s".
+_DART_MIN_INTERVAL_ESTIMATE_SECONDS = 0.1
+
+#: DART 응답 평균 소요(초) — §3 산식 "평균 응답 ~0.7s"(최대 기준 추정치). §5 live 스모크
+#: 실측(네이버 035420, 2015~2025, 신규 수집)으로 보정: 88건(11연 x 4보고서 x 2scope) 요청에
+#: 17.41초 — 요청당 평균 0.198초, min_interval(0.1초) 제외 시 응답만 약 0.098초. 0.7초는
+#: 실측의 7배로 과도해 0.15초로 하향(그래도 실측 대비 약 1.5배 여유 — "최대" 기준 유지).
+_DART_AVG_RESPONSE_ESTIMATE_SECONDS = 0.15
+
+#: 시장 수집 — 연당 pykrx 페이징 소요(초, 가격·수급 각 1회). §3 산식 "~1.5s". §5 live 스모크
+#: 실측: 11개년(가격+수급+지수+캘린더+병합, KRX 신규 로그인 포함) 총 37.40초 — 원 산식
+#: (11 x 2 x 1.5+10=43초)이 실측보다 약 15% 높아 "최대" 기준으로 적절히 유지됨(그대로 둠).
+_MARKET_PER_YEAR_ESTIMATE_SECONDS = 1.5
+
+#: 시장 수집 — KRX 로그인 등 1회성 오버헤드(초). §3 산식 "10s 오버헤드(로그인)". 위 실측
+#: (총 37.40초)이 원 산식 예측과 부합해 그대로 유지(로그인 자체 시간은 위 총합에 포함돼
+#: 개별 분리 실측은 하지 않음 — 총합 비교로 충분히 보정됨).
+_MARKET_LOGIN_OVERHEAD_ESTIMATE_SECONDS = 10.0
+
+#: 재무 데이터셋 빌드 고정 예상(초). §3 산식 "고정 ~10초". §5 live 스모크 실측 0.12초로
+#: 원 산식이 83배 과도해 2.0초로 대폭 하향(정규화·지표 계산이 순수 로컬 연산이라 매우
+#: 빠름 — 그래도 더 긴 이력·더 많은 계정으로 확장될 여지를 감안해 약 15배 여유는 유지).
+_BUILD_ESTIMATE_SECONDS = 2.0
+
+#: XBRL 원본 1건당 다운로드 예상(초). §3 산식 "건당 ~10초". XBRL·대조는 옵션(체크박스
+#: 기본 off)이라 §5 live 스모크의 필수 검증 대상이 아니다 — 명세 §3 값을 그대로 쓴다.
+_XBRL_PER_FILING_ESTIMATE_SECONDS = 10.0
+
+#: 대조(reconcile_all) 기본 예상(초) — 전량 대조 계산·리포트 저장. §3 산식 "~60초"를
+#: 그대로 쓴다(위와 동일 사유로 §5 필수 검증 대상 아님).
+_RECONCILE_BASE_ESTIMATE_SECONDS = 60.0
+
+#: 대조 — 미파싱 XBRL 잔여 1건당 파싱 추가 예상(초). §3 산식 "파싱 잔여"의 구체화 —
+#: XBRL 파싱은 core/xbrl/parser.py가 담당하며 파일당 수 초 내로 끝나는 로컬 연산이라는
+#: 점을 반영한 설계 시점 추정치(위와 동일 사유로 §5 필수 검증 대상 아님).
+_RECONCILE_PER_FILING_ESTIMATE_SECONDS = 2.0
+
+
+@dataclass(frozen=True)
+class PrepStep:
+    """데이터 준비 단계 1개 (명세 §1)."""
+
+    key: str
+    label: str
+    estimate_seconds: float
+
+
+@dataclass(frozen=True)
+class PrepPlan:
+    """이미 준비된 단계를 제외한 데이터 준비 계획 (명세 §1)."""
+
+    steps: list[PrepStep]
+
+    @property
+    def total_estimate_seconds(self) -> float:
+        return sum(step.estimate_seconds for step in self.steps)
+
+
+@dataclass(frozen=True)
+class PrepStepOutcome:
+    """완료된 단계 1개의 결과 — 화면이 단계별 1줄 요약을 렌더링하는 데 쓴다."""
+
+    step: PrepStep
+    summary: str
+    elapsed_seconds: float
+
+
+@dataclass(frozen=True)
+class PrepExecutionResult:
+    """:func:`execute_data_preparation` 1회 실행의 결과.
+
+    ``failed_step``\\ 이 None이 아니면 그 단계에서 중단된 것이다(이후 단계
+    미실행 — 명세 §1 "단계 실패 시 즉시 중단"). ``completed``\\ 는 실패
+    이전에 끝낸 단계들이다.
+    """
+
+    completed: list[PrepStepOutcome]
+    failed_step: PrepStep | None
+    error_message: str | None
+
+    @property
+    def succeeded(self) -> bool:
+        return self.failed_step is None
+
+
+def _require_stock_code(corp: DartCorporation) -> str:
+    if corp.stock_code is None:
+        raise DataValidationError(
+            f"'{corp.corp_name}'은(는) 비상장 법인입니다 — 시장 데이터를 수집할 수 없습니다."
+        )
+    return corp.stock_code
+
+
+def _financials_ready(corp: DartCorporation, settings: Settings) -> bool:
+    """financial_metrics.parquet 존재 여부 — ``ensure_data_ready``와 동일 신호(명세 §1)."""
+    path = financials_out_dir(settings.data_dir, corp.corp_code) / METRICS_FILENAME
+    return path.exists()
+
+
+def _market_ready(stock_code: str, settings: Settings) -> bool:
+    """daily.parquet·거래일 캘린더 존재 여부 — ``ensure_data_ready``와 동일 신호(명세 §1)."""
+    daily = market_normalized_stock_dir(settings.data_dir, stock_code) / DAILY_FILENAME
+    calendar = market_calendar_path(settings.data_dir)
+    return daily.exists() and calendar.exists()
+
+
+def _estimate_financials_seconds(from_year: int, to_year: int) -> float:
+    """§3 산식 — R=연수 x 4(보고서) x 2(scope), 예상=R x (min_interval+평균 응답) "최대" 기준."""
+    num_years = to_year - from_year + 1
+    requests = num_years * _REPORT_TYPES_PER_YEAR * _DEFAULT_SCOPES_COUNT
+    return requests * (_DART_MIN_INTERVAL_ESTIMATE_SECONDS + _DART_AVG_RESPONSE_ESTIMATE_SECONDS)
+
+
+def _estimate_market_seconds(from_year: int, to_year: int) -> float:
+    """§3 산식 — 연수 x 2(가격·수급) x ~1.5s + 10s 오버헤드.
+
+    ``연수``는 재무 수집과 동일하게 ``to_year-from_year+1``을 쓴다 — 실제 수집
+    종료일은 항상 KST 어제지만(:func:`_run_market_step`), 화면은 to_year를
+    분석 기준일 연도로 맞춰 호출하므로 근사가 충분히 가깝다(§3 설계 재량).
+    """
+    num_years = to_year - from_year + 1
+    return (
+        num_years * 2 * _MARKET_PER_YEAR_ESTIMATE_SECONDS + _MARKET_LOGIN_OVERHEAD_ESTIMATE_SECONDS
+    )
+
+
+def _estimate_xbrl_filing_count(from_year: int, to_year: int) -> int:
+    """§3 산식 — (연수+1) x 4 상한(연간보고서는 이듬해 3월 접수 — §4.5 경계와 동일)."""
+    num_years = to_year - from_year + 1
+    return (num_years + 1) * _REPORT_TYPES_PER_YEAR
+
+
+def _estimate_xbrl_seconds(from_year: int, to_year: int) -> float:
+    """§3 산식 — 건당 ~10초 x 예상 건수."""
+    return _estimate_xbrl_filing_count(from_year, to_year) * _XBRL_PER_FILING_ESTIMATE_SECONDS
+
+
+def _estimate_reconcile_seconds(from_year: int, to_year: int) -> float:
+    """§3 산식 — ~60초 + 파싱 잔여(미파싱 예상 건수에 비례해 근사)."""
+    filing_count = _estimate_xbrl_filing_count(from_year, to_year)
+    return _RECONCILE_BASE_ESTIMATE_SECONDS + filing_count * _RECONCILE_PER_FILING_ESTIMATE_SECONDS
+
+
+def plan_data_preparation(
+    corp: DartCorporation,
+    *,
+    from_year: int,
+    to_year: int,
+    include_xbrl: bool,
+    settings: Settings,
+) -> PrepPlan:
+    """corp의 미비 데이터를 채우기 위한 단계 계획을 세운다 (명세 §1).
+
+    이미 준비된 단계는 제외한다(멱등 — :func:`ensure_data_ready`와 동일 신호:
+    metrics·daily·calendar 존재 여부). 전부 준비돼 있고 ``include_xbrl=False``면
+    빈 계획(steps=[])을 반환한다 — 화면은 이 경우 준비 패널 자체를 띄우지 않는다.
+    """
+    if from_year > to_year:
+        raise DataValidationError(
+            f"시작 연도({from_year})는 종료 연도({to_year})보다 클 수 없습니다."
+        )
+    if from_year < MIN_SUPPORTED_YEAR:
+        raise DataValidationError(
+            f"전체 재무제표 API는 {MIN_SUPPORTED_YEAR}년 이후 사업연도만 제공합니다"
+            " (PROJECT_SPEC §6.4)."
+        )
+    stock_code = _require_stock_code(corp)
+    financials_needed = not _financials_ready(corp, settings)
+    market_needed = not _market_ready(stock_code, settings)
+
+    steps: list[PrepStep] = []
+    if financials_needed:
+        steps.append(
+            PrepStep(
+                key="financials",
+                label="① 재무 데이터 수집",
+                estimate_seconds=_estimate_financials_seconds(from_year, to_year),
+            )
+        )
+    if market_needed:
+        steps.append(
+            PrepStep(
+                key="market",
+                label="② 시장 데이터 수집",
+                estimate_seconds=_estimate_market_seconds(from_year, to_year),
+            )
+        )
+    if financials_needed:
+        steps.append(
+            PrepStep(
+                key="build",
+                label="③ 재무 데이터셋 빌드",
+                estimate_seconds=_BUILD_ESTIMATE_SECONDS,
+            )
+        )
+    if include_xbrl:
+        steps.append(
+            PrepStep(
+                key="xbrl",
+                label="④ XBRL 원본 수집",
+                estimate_seconds=_estimate_xbrl_seconds(from_year, to_year),
+            )
+        )
+        steps.append(
+            PrepStep(
+                key="reconcile",
+                label="⑤ API-XBRL 대조",
+                estimate_seconds=_estimate_reconcile_seconds(from_year, to_year),
+            )
+        )
+    return PrepPlan(steps=steps)
+
+
+def _collect_xbrl_for_prep(
+    client: DartClient,
+    corp: DartCorporation,
+    *,
+    from_year: int,
+    to_year: int,
+    data_dir: Path,
+    min_interval_seconds: float,
+) -> list[XbrlDownloadOutcome]:
+    """cli.py `_collect_xbrl_filings`(§4.5)와 동일한 필터로 대상 정기보고서를 고른다."""
+    today = datetime.now(KST).date()
+    filings = find_periodic_filings(
+        client, corp.corp_code, as_of_date=today, lookback_years=today.year - from_year + 1
+    )
+    selected = [f for f in filings if from_year <= f.rcept_dt.year <= to_year + 1]
+    return download_xbrl_filings(
+        client, selected, data_dir=data_dir, min_interval_seconds=min_interval_seconds
+    )
+
+
+def _summarize_financials(summary: CollectionSummary) -> str:
+    total_rows = sum(o.row_count for o in summary.outcomes)
+    fetched = sum(1 for o in summary.outcomes if o.result == "FETCHED")
+    cached = sum(1 for o in summary.outcomes if o.result == "CACHED")
+    no_data = sum(1 for o in summary.outcomes if o.result in ("NO_DATA", "NO_DATA_CACHED"))
+    return (
+        f"재무제표 수집 완료 — 요청 {len(summary.outcomes)}건 "
+        f"(신규 {fetched}·캐시 {cached}·데이터없음 {no_data}) · 총 {total_rows}행"
+    )
+
+
+def _summarize_market(summary: MarketCollectionSummary) -> str:
+    parts = [
+        f"{outcome.dataset}:{outcome.row_count}행"
+        for outcome in summary.outcomes
+        if outcome.result in ("FETCHED", "CACHED", "BUILT")
+    ]
+    detail = " ".join(parts) if parts else "-"
+    note = " (부분 수집 — KRX 자격증명 없음)" if summary.has_skipped_no_auth() else ""
+    return f"시장 데이터 수집 완료 — {detail}{note}"
+
+
+def _summarize_build(report: FinancialBuildReport) -> str:
+    scopes = ",".join(report.scopes)
+    return f"재무 데이터셋 빌드 완료 — fact {report.fact_count}건 (scopes={scopes})"
+
+
+def _summarize_xbrl(outcomes: list[XbrlDownloadOutcome]) -> str:
+    counts = Counter(outcome.result for outcome in outcomes)
+    detail = " ".join(f"{key}:{counts[key]}" for key in sorted(counts))
+    return f"XBRL 원본 수집 완료 — {len(outcomes)}건 ({detail or '수집 대상 없음'})"
+
+
+def _summarize_reconcile(report: ReconciliationReport) -> str:
+    return (
+        f"API-XBRL 대조 완료 — 총 {report.total}건 "
+        f"(연간 match_rate {report.annual.match_rate:.3f} · 분기 {report.quarterly.match_rate:.3f})"
+    )
+
+
+def _run_financials_step(
+    corp: DartCorporation, settings: Settings, *, from_year: int, to_year: int
+) -> str:
+    """core.dart.financial_api.collect_financials 조립 (CLI collect-financials와 동일, 명세 §1)."""
+    api_key = settings.require_dart_api_key()
+    dart_config = load_dart_config()
+    out_dir = financials_out_dir(settings.data_dir, corp.corp_code)
+    with DartClient(
+        api_key,
+        timeout=dart_config.timeout_seconds,
+        max_attempts=dart_config.retry.max_attempts,
+        backoff_seconds=dart_config.retry.backoff_seconds,
+    ) as client:
+        summary = collect_financials(
+            client,
+            corp.corp_code,
+            from_year=from_year,
+            to_year=to_year,
+            out_dir=out_dir,
+            min_interval_seconds=dart_config.min_interval_seconds,
+        )
+    return _summarize_financials(summary)
+
+
+def _run_market_step(corp: DartCorporation, settings: Settings, *, from_year: int) -> str:
+    """core.market.collector.collect_market_data 조립 — 종료일 KST 어제(CLI 규칙 동일, 명세 §1)."""
+    stock_code = _require_stock_code(corp)
+    market_config = load_market_config()
+    source = PykrxSource(krx_id=settings.krx_id, krx_pw=settings.krx_pw)
+    start = date(from_year, 1, 1)
+    end = datetime.now(KST).date() - timedelta(days=1)
+    summary = collect_market_data(
+        source,
+        stock_code=stock_code,
+        index_code=market_config.default_index_code,
+        from_date=start,
+        to_date=end,
+        data_dir=settings.data_dir,
+        min_interval_seconds=market_config.min_interval_seconds,
+    )
+    return _summarize_market(summary)
+
+
+def _run_build_step(corp: DartCorporation, settings: Settings) -> str:
+    """core.financials.pipeline.build_financial_datasets 조립 (명세 §1)."""
+    report = build_financial_datasets(corp.corp_code, data_dir=settings.data_dir)
+    return _summarize_build(report)
+
+
+def _run_xbrl_step(
+    corp: DartCorporation, settings: Settings, *, from_year: int, to_year: int
+) -> str:
+    """download_xbrl_filings 조립 — CLI §4.5와 동일 필터(명세 §1). FAILED 1건이라도 중단."""
+    api_key = settings.require_dart_api_key()
+    dart_config = load_dart_config()
+    with DartClient(
+        api_key,
+        timeout=dart_config.timeout_seconds,
+        max_attempts=dart_config.retry.max_attempts,
+        backoff_seconds=dart_config.retry.backoff_seconds,
+    ) as client:
+        outcomes = _collect_xbrl_for_prep(
+            client,
+            corp,
+            from_year=from_year,
+            to_year=to_year,
+            data_dir=settings.data_dir,
+            min_interval_seconds=dart_config.min_interval_seconds,
+        )
+    failed = [o for o in outcomes if o.result == "FAILED"]
+    if failed:
+        reasons = "; ".join(f"{o.rcept_no}: {o.reason or '사유 미상'}" for o in failed)
+        raise DataValidationError(f"XBRL 원본 수집 실패 {len(failed)}건 — {reasons}")
+    return _summarize_xbrl(outcomes)
+
+
+def _run_reconcile_step(corp: DartCorporation, settings: Settings) -> str:
+    """core.reconciliation.pipeline.reconcile_all 조립 (명세 §1)."""
+    report = reconcile_all(corp.corp_code, data_dir=settings.data_dir)
+    return _summarize_reconcile(report)
+
+
+def run_preparation_step(
+    step: PrepStep,
+    corp: DartCorporation,
+    *,
+    settings: Settings,
+    from_year: int,
+    to_year: int,
+) -> str:
+    """PrepStep 1개를 core 함수 조립으로 실행하고 결과 요약 1줄을 반환한다 (명세 §1).
+
+    실패는 그대로 전파한다(모듈 docstring의 actions.py 계약) — 화면이 st.error로
+    바꾸고 이후 단계를 실행하지 않는다.
+    """
+    if step.key == "financials":
+        return _run_financials_step(corp, settings, from_year=from_year, to_year=to_year)
+    if step.key == "market":
+        return _run_market_step(corp, settings, from_year=from_year)
+    if step.key == "build":
+        return _run_build_step(corp, settings)
+    if step.key == "xbrl":
+        return _run_xbrl_step(corp, settings, from_year=from_year, to_year=to_year)
+    if step.key == "reconcile":
+        return _run_reconcile_step(corp, settings)
+    raise AssertionError(f"알 수 없는 준비 단계: {step.key!r}")
+
+
+#: 단계 실행 중 전파될 수 있는 예외 — screens.py `_GUARDED_EXCEPTIONS`의 부분집합
+#: (명세 §1 "단계 실패 시 즉시 중단").
+_PREP_STEP_EXCEPTIONS = (
+    ConfigError,
+    DartApiError,
+    DartTransportError,
+    DataValidationError,
+    MarketAuthError,
+    FileNotFoundError,
+    XbrlParseError,
+)
+
+
+def execute_data_preparation(
+    plan: PrepPlan,
+    corp: DartCorporation,
+    *,
+    settings: Settings,
+    from_year: int,
+    to_year: int,
+    on_step_start: Callable[[PrepStep, float], None] | None = None,
+) -> PrepExecutionResult:
+    """계획의 각 단계를 순서대로 실행하고, 실패 시 즉시 중단한다 (명세 §1).
+
+    Streamlit에 의존하지 않아 순수 단위테스트가 가능하다 — 화면은
+    ``on_step_start``\\ (단계 시작 직전, 그 시점의 남은 예상초)로 진행 라벨을
+    갱신하고, 반환된 ``completed``\\ 로 단계별 결과를 렌더링한다.
+    """
+    completed: list[PrepStepOutcome] = []
+    remaining = plan.total_estimate_seconds
+    for step in plan.steps:
+        if on_step_start is not None:
+            on_step_start(step, remaining)
+        step_start = time.monotonic()
+        try:
+            summary = run_preparation_step(
+                step, corp, settings=settings, from_year=from_year, to_year=to_year
+            )
+        except _PREP_STEP_EXCEPTIONS as err:
+            return PrepExecutionResult(
+                completed=completed, failed_step=step, error_message=str(err)
+            )
+        elapsed = time.monotonic() - step_start
+        completed.append(PrepStepOutcome(step=step, summary=summary, elapsed_seconds=elapsed))
+        remaining = max(0.0, remaining - step.estimate_seconds)
+    return PrepExecutionResult(completed=completed, failed_step=None, error_message=None)
 
 
 # ---------------------------------------------------------------------------
@@ -917,12 +1384,17 @@ __all__ = [
     "HYPOTHESIS_DECISION_OPTIONS",
     "CandidateGenerationResult",
     "CreateRunResult",
+    "PrepExecutionResult",
+    "PrepPlan",
+    "PrepStep",
+    "PrepStepOutcome",
     "ResolveFailure",
     "approve_hypothesis_draft",
     "approve_strategy_action",
     "create_run",
     "ensure_candidates_stage",
     "ensure_data_ready",
+    "execute_data_preparation",
     "generate_candidates",
     "generate_strategy_draft_action",
     "load_backtest_result",
@@ -931,8 +1403,10 @@ __all__ = [
     "load_robustness_report",
     "load_strategy_name",
     "load_trade_log",
+    "plan_data_preparation",
     "resolve_corp",
     "run_backtest_action",
+    "run_preparation_step",
     "save_analyst_view",
     "save_hypothesis",
     "submit_interpretation_action",

@@ -13,21 +13,39 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
+from research_backtest.app.ui import actions
 from research_backtest.app.ui import state as ui_state
-from research_backtest.core.config import Settings
+from research_backtest.core.config import DartConfig, MarketConfig, Settings
+from research_backtest.core.dart.financial_api import CollectionSummary
+from research_backtest.core.financials.pipeline import (
+    METRICS_FILENAME,
+    FinancialBuildReport,
+    financials_out_dir,
+)
 from research_backtest.core.hitl.states import PipelineState
 from research_backtest.core.hitl.store import RunStore
+from research_backtest.core.market.collector import (
+    DAILY_FILENAME,
+    MarketCollectionSummary,
+    market_calendar_path,
+    market_normalized_stock_dir,
+)
 
 from .conftest import (
     CORP_NAME,
     EVIDENCE_IDS,
+    SK_HYNIX,
     make_analyst_view,
     make_backtest_interpretation,
     make_backtest_result,
+    make_build_report,
     make_candidate_analysis,
+    make_collection_summary,
     make_hypothesis,
+    make_market_summary,
     make_run_store,
     make_strategy,
     make_strategy_review,
@@ -218,3 +236,107 @@ def test_screen3_save_matches_cli_transition(ui_settings: Settings) -> None:
     assert saved_view.rejected_evidence_ids == [EVIDENCE_IDS[2]]
     assert saved_view.rejected_evidence_reasons == {EVIDENCE_IDS[2]: "이번 범위 밖"}
     assert saved_view.counterarguments == ["이미 선반영되었을 수 있다."]
+
+
+# ---------------------------------------------------------------------------
+# 화면① 데이터 준비 패널 (docs/specs/W3d-ui-data-prep.md §2) — resolve_corp만
+# monkeypatch해 DART 호출 없이 corp를 확보하고, 데이터 미비는 tmp data_dir이
+# 비어 있는 것으로 자연히 재현한다(실행 클릭 케이스는 collector도 monkeypatch).
+# ---------------------------------------------------------------------------
+
+
+def _patch_prep_collectors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """준비 실행 클릭 케이스용 — resolve_corp·collector 전부 monkeypatch(명세 §4).
+
+    financials·market·build 각 fake는 요약 객체만 흉내내지 않고 실제로 marker
+    파일을 써서(financial_metrics.parquet·daily.parquet·calendar.parquet),
+    이어지는 create_run의 ensure_data_ready 재검사가 실제로 통과하게 한다 —
+    "완료 후 run 생성 자동 재시도"까지 실제로 관통하는지 검증하기 위함이다.
+    """
+    monkeypatch.setattr(actions, "resolve_corp", lambda company, settings: SK_HYNIX)
+    monkeypatch.setattr(actions, "load_dart_config", lambda: DartConfig())
+    monkeypatch.setattr(actions, "load_market_config", lambda: MarketConfig())
+
+    def fake_collect_financials(
+        client: object, corp_code: str, *, out_dir: Path, **_: object
+    ) -> CollectionSummary:
+        return make_collection_summary(corp_code=corp_code)
+
+    def fake_build(corp_code: str, *, data_dir: Path, **_: object) -> FinancialBuildReport:
+        path = financials_out_dir(data_dir, corp_code) / METRICS_FILENAME
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"")
+        return make_build_report(corp_code=corp_code)
+
+    def fake_collect_market(
+        source: object, *, stock_code: str, data_dir: Path, **_: object
+    ) -> MarketCollectionSummary:
+        daily = market_normalized_stock_dir(data_dir, stock_code) / DAILY_FILENAME
+        daily.parent.mkdir(parents=True, exist_ok=True)
+        daily.write_bytes(b"")
+        calendar = market_calendar_path(data_dir)
+        calendar.parent.mkdir(parents=True, exist_ok=True)
+        calendar.write_bytes(b"")
+        return make_market_summary(stock_code=stock_code)
+
+    monkeypatch.setattr(actions, "collect_financials", fake_collect_financials)
+    monkeypatch.setattr(actions, "build_financial_datasets", fake_build)
+    monkeypatch.setattr(actions, "collect_market_data", fake_collect_market)
+
+
+def test_screen1_missing_data_shows_prep_panel(
+    monkeypatch: pytest.MonkeyPatch, ui_settings: Settings
+) -> None:
+    """데이터 미비 → 준비 패널(옵션·버튼)이 뜬다(명세 §2) — 실행은 누르지 않는다."""
+    monkeypatch.setattr(actions, "resolve_corp", lambda company, settings: SK_HYNIX)
+
+    at = AppTest.from_file(str(APP_PATH), default_timeout=30).run()
+    at.text_input(key="scr1_company").set_value(CORP_NAME)
+    at.run()
+    at.button(key="scr1_create_run_btn").click().run()
+
+    assert not at.exception
+    assert any("데이터 준비가 완료되지 않았습니다" in e.value for e in at.error)
+    assert _has_key(at.number_input, "scr1_prep_from_year")
+    assert _has_key(at.checkbox, "scr1_prep_include_xbrl")
+    assert _has_key(at.button, "scr1_prep_run_btn")
+    # 아직 실행 전이므로 단계별 예상 총 소요 캡션이 보인다(명세 §2 "전체 계획 요약").
+    assert any("단계" in c.value and "예상 총 소요" in c.value for c in at.caption)
+
+
+def test_screen1_prep_execute_creates_run_and_retries(
+    monkeypatch: pytest.MonkeyPatch, ui_settings: Settings
+) -> None:
+    """[데이터 준비 실행] 클릭 → 단계별 완료 후 run 생성을 자동 재시도한다(명세 §2).
+
+    ``st.rerun()``\\ 은 같은 ``AppTest.run()`` 호출 안에서 스크립트를 즉시
+    다시 실행한다(streamlit.testing.v1.local_script_runner의 rerun 처리 —
+    실측으로 확인). 그 결과 재시도 *이전*(prep 실행 중) 렌더된 성공 배너·
+    st.status 로그는 재실행된 최종 트리에는 남지 않는다 — 그래서 이 테스트는
+    일시적 성공 문구 대신 **실제로 남는 산출물**(디스크의 RunManifest·
+    RunState, 재실행 후 사이드바·상태 배너에 반영된 새 run)로 검증한다.
+    """
+    _patch_prep_collectors(monkeypatch)
+    monkeypatch.setenv("DART_API_KEY", "test-dart-key")
+
+    at = AppTest.from_file(str(APP_PATH), default_timeout=30).run()
+    at.text_input(key="scr1_company").set_value(CORP_NAME)
+    at.run()
+    at.button(key="scr1_create_run_btn").click().run()
+    assert _has_key(at.button, "scr1_prep_run_btn")
+
+    at.button(key="scr1_prep_run_btn").click().run()
+
+    assert not at.exception
+
+    run_dirs = [p for p in ui_settings.outputs_dir.iterdir() if p.is_dir()]
+    assert len(run_dirs) == 1
+    run_state = RunStore(ui_settings.outputs_dir, run_dirs[0].name).load_run_state()
+    assert run_state.current_state == PipelineState.DATA_READY
+
+    # 재실행된 최종 화면이 새 run을 선택된 상태로 반영한다 — "화면②로 이어지게
+    # 한다"(명세 §2)의 관측 가능한 증거: 사이드바 선택·상태 배너가 갱신되고,
+    # 화면②(다음 단계)의 생성 버튼이 이 run에 대해 렌더된다.
+    data_ready_label = ui_state.PIPELINE_STATE_LABELS[PipelineState.DATA_READY]
+    assert any(f"현재 상태: {data_ready_label}" in md.value for md in at.markdown)
+    assert _has_key(at.button, f"scr2_generate_btn__{run_dirs[0].name}")

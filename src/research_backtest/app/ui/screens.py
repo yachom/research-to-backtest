@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 import json
+import time
 from collections.abc import Callable
 from datetime import date
 from typing import cast
@@ -22,13 +23,16 @@ from pydantic import ValidationError as PydanticValidationError
 
 from research_backtest.app.ui import actions, state
 from research_backtest.core.config import Settings
+from research_backtest.core.dart.financial_api import MIN_SUPPORTED_YEAR
 from research_backtest.core.exceptions import (
     ApprovalGateError,
     ConfigError,
     DartApiError,
     DartTransportError,
     DataValidationError,
+    MarketAuthError,
     StrategyValidationError,
+    XbrlParseError,
 )
 from research_backtest.core.hitl.models import (
     AnalystView,
@@ -39,6 +43,7 @@ from research_backtest.core.hitl.models import (
 )
 from research_backtest.core.hitl.states import PipelineState, RunState
 from research_backtest.core.hitl.store import RunStore
+from research_backtest.core.models import DartCorporation
 
 _GUARDED_EXCEPTIONS = (
     ApprovalGateError,
@@ -46,11 +51,25 @@ _GUARDED_EXCEPTIONS = (
     DartApiError,
     DartTransportError,
     DataValidationError,
+    FileNotFoundError,
+    MarketAuthError,
     StrategyValidationError,
+    XbrlParseError,
     PydanticValidationError,
 )
 
 _AI_CAPTION = "[AI 후보·초안 — 사용자 검토·승인 필요]"
+
+#: 화면① 데이터 준비 패널이 떠 있는 동안의 세션 상태 키 — 값은 (company, as_of ISO)
+#: (docs/specs/W3d-ui-data-prep.md §1~§2).
+_PREP_PENDING_KEY = "scr1_prep_pending"
+
+
+def _format_duration(seconds: float) -> str:
+    """초 단위 예상·경과 시간을 사람이 읽기 좋은 문자열로 바꾼다 (명세 §2 라벨 형식)."""
+    if seconds < 60:
+        return f"{seconds:.0f}초"
+    return f"{seconds / 60:.1f}분"
 
 
 def _run_action[T](fn: Callable[[], T], *, success_message: str | None = None) -> T | None:
@@ -171,6 +190,181 @@ def _render_resolve_failure(failure: actions.ResolveFailure) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _create_run_and_rerun(settings: Settings, company: str, as_of: date) -> None:
+    """create_run을 호출해 성공하면 사이드바 선택을 갱신하고 재실행한다.
+
+    화면①의 직접 제출·준비 완료 후 자동 재시도(명세 §2 "run 생성을 자동
+    재시도해 화면 ②로 이어지게 한다") 두 경로가 이 헬퍼를 공유한다.
+    """
+    outcome = _run_action(lambda: actions.create_run(settings, company=company, as_of=as_of))
+    if isinstance(outcome, actions.ResolveFailure):
+        _render_resolve_failure(outcome)
+    elif outcome is not None:
+        st.success(f"run 생성 완료: {outcome.run_id}")
+        st.session_state["sidebar_run_select"] = (
+            f"{outcome.run_id} — {company} "
+            f"[{state.PIPELINE_STATE_LABELS[outcome.run_state.current_state]}]"
+        )
+        st.rerun()
+
+
+def _attempt_create_run(settings: Settings, company: str, as_of: date) -> None:
+    """run 생성을 시도한다 — 데이터가 미비하면 준비 패널을 띄우기 위한 상태만 남긴다.
+
+    ``actions.create_run``\\ 을 바로 부르지 않는 이유: 그 함수는 실패 시
+    문자열 메시지만 담은 예외를 던져 준비 패널에 필요한 corp 정보를 잃는다.
+    대신 그 함수가 내부적으로 쓰는 것과 동일한 조립 부품
+    (``resolve_corp``\\ ·``ensure_data_ready``, 둘 다 actions.py 공개 API)을
+    직접 호출해 corp를 확보한다 — core 로직 재구현이 아니라 재사용이다.
+    """
+    resolved = _run_action(lambda: actions.resolve_corp(company, settings))
+    if resolved is None:
+        return
+    if isinstance(resolved, actions.ResolveFailure):
+        _render_resolve_failure(resolved)
+        return
+    corp = resolved
+    stock_code = corp.stock_code
+    if stock_code is None:
+        st.error(f"'{corp.corp_name}'은(는) 비상장 법인입니다 — run을 생성할 수 없습니다.")
+        return
+    missing = _run_action(lambda: actions.ensure_data_ready(corp, stock_code, settings))
+    if missing is None:
+        return
+    if missing:
+        st.session_state[_PREP_PENDING_KEY] = (company.strip(), as_of.isoformat())
+        return
+    _create_run_and_rerun(settings, company, as_of)
+
+
+def _render_prep_panel(settings: Settings, company: str, as_of: date) -> None:
+    """데이터 미비 안내 아래에 준비 옵션·[데이터 준비 실행] 버튼을 그린다 (명세 §1~§2).
+
+    corp·missing은 매 렌더마다 다시 확인한다(가볍다 — 고유번호 레지스트리는
+    로컬 캐시, 존재 확인은 파일 존재 검사뿐) — 그래야 연도·체크박스를 바꿀
+    때마다(=매 rerun) 계획이 최신 상태로 재계산된다.
+    """
+    resolved = _run_action(lambda: actions.resolve_corp(company, settings))
+    if resolved is None:
+        return
+    if isinstance(resolved, actions.ResolveFailure):
+        _render_resolve_failure(resolved)
+        return
+    corp = resolved
+    stock_code = corp.stock_code
+    if stock_code is None:
+        st.error(f"'{corp.corp_name}'은(는) 비상장 법인입니다 — run을 생성할 수 없습니다.")
+        st.session_state.pop(_PREP_PENDING_KEY, None)
+        return
+
+    missing = _run_action(lambda: actions.ensure_data_ready(corp, stock_code, settings))
+    if missing is None:
+        return
+    if not missing:
+        # 다른 화면·CLI에서 그 사이 준비가 끝났을 수 있다 — 바로 재시도.
+        st.session_state.pop(_PREP_PENDING_KEY, None)
+        _create_run_and_rerun(settings, company, as_of)
+        return
+
+    st.error("데이터 준비가 완료되지 않았습니다:\n" + "\n".join(f"- {m}" for m in missing))
+    st.markdown("**데이터 준비**")
+    from_year = st.number_input(
+        "수집 시작 연도",
+        min_value=MIN_SUPPORTED_YEAR,
+        max_value=as_of.year,
+        value=MIN_SUPPORTED_YEAR,
+        step=1,
+        key="scr1_prep_from_year",
+    )
+    include_xbrl = st.checkbox(
+        "XBRL 원본 수집 + API-XBRL 대조도 함께 실행 (정합성 검증용 · 수 분 추가)",
+        value=False,
+        key="scr1_prep_include_xbrl",
+    )
+
+    plan = _run_action(
+        lambda: actions.plan_data_preparation(
+            corp,
+            from_year=int(from_year),
+            to_year=as_of.year,
+            include_xbrl=include_xbrl,
+            settings=settings,
+        )
+    )
+    if plan is None:
+        return
+    if not plan.steps:
+        st.info("필요한 데이터가 모두 준비되어 있습니다 — run 생성을 다시 시도합니다.")
+        st.session_state.pop(_PREP_PENDING_KEY, None)
+        _create_run_and_rerun(settings, company, as_of)
+        return
+
+    if any(prep_step.key == "market" for prep_step in plan.steps) and (
+        not settings.krx_id or not settings.krx_pw
+    ):
+        st.warning(
+            "투자자 수급·지수는 KRX 로그인 필요 — .env에 KRX_ID/KRX_PW 설정 후 재실행하면 "
+            "가격 캐시는 유지된 채 나머지만 수집된다."
+        )
+
+    st.caption(
+        f"총 {len(plan.steps)}단계 · 예상 총 소요 ~{_format_duration(plan.total_estimate_seconds)} "
+        "(캐시가 있으면 훨씬 빨리 끝납니다)"
+    )
+    for prep_step in plan.steps:
+        st.caption(f"- {prep_step.label} — 예상 ~{_format_duration(prep_step.estimate_seconds)}")
+
+    if st.button("데이터 준비 실행", key="scr1_prep_run_btn"):
+        _execute_prep_plan(
+            settings, corp, plan, from_year=int(from_year), company=company, as_of=as_of
+        )
+
+
+def _execute_prep_plan(
+    settings: Settings,
+    corp: DartCorporation,
+    plan: actions.PrepPlan,
+    *,
+    from_year: int,
+    company: str,
+    as_of: date,
+) -> None:
+    """계획을 st.status로 단계별 표시하며 실행하고, 성공하면 run 생성을 재시도한다 (명세 §2)."""
+    with st.status("데이터 준비를 실행하는 중...", expanded=True) as status:
+
+        def _on_step_start(prep_step: actions.PrepStep, remaining: float) -> None:
+            status.update(
+                label=(
+                    f"{prep_step.label} — 예상 ~{_format_duration(prep_step.estimate_seconds)} "
+                    f"(전체 남은 예상 ~{_format_duration(remaining)})"
+                )
+            )
+
+        result = actions.execute_data_preparation(
+            plan,
+            corp,
+            settings=settings,
+            from_year=from_year,
+            to_year=as_of.year,
+            on_step_start=_on_step_start,
+        )
+        for outcome in result.completed:
+            st.write(
+                f"{outcome.step.label} — 예상 ~{_format_duration(outcome.step.estimate_seconds)} "
+                f"… 완료 ({outcome.elapsed_seconds:.0f}초): {outcome.summary}"
+            )
+        if not result.succeeded:
+            failed_step = result.failed_step
+            assert failed_step is not None
+            status.update(label=f"{failed_step.label} — 실패", state="error")
+            st.error(result.error_message)
+            return
+        status.update(label="데이터 준비 완료", state="complete")
+
+    st.session_state.pop(_PREP_PENDING_KEY, None)
+    _create_run_and_rerun(settings, company, as_of)
+
+
 def render_screen1(settings: Settings, run_id: str | None) -> None:
     st.subheader(state.SCREEN_TITLES[0])
     st.write("기업명과 분석 기준일을 입력해 새 실행(run)을 생성합니다.")
@@ -192,18 +386,11 @@ def render_screen1(settings: Settings, run_id: str | None) -> None:
         if not company.strip():
             st.error("기업명을 입력하세요.")
         else:
-            outcome = _run_action(
-                lambda: actions.create_run(settings, company=company, as_of=as_of)
-            )
-            if isinstance(outcome, actions.ResolveFailure):
-                _render_resolve_failure(outcome)
-            elif outcome is not None:
-                st.success(f"run 생성 완료: {outcome.run_id}")
-                st.session_state["sidebar_run_select"] = (
-                    f"{outcome.run_id} — {company} "
-                    f"[{state.PIPELINE_STATE_LABELS[outcome.run_state.current_state]}]"
-                )
-                st.rerun()
+            _attempt_create_run(settings, company, as_of)
+
+    pending = st.session_state.get(_PREP_PENDING_KEY)
+    if pending is not None and pending[0] == company.strip():
+        _render_prep_panel(settings, pending[0], date.fromisoformat(pending[1]))
 
     if run_id is not None:
         st.divider()
@@ -223,14 +410,20 @@ def render_screen2(settings: Settings, store: RunStore, run_state: RunState) -> 
     analysis = actions.try_load_candidate_analysis(store)
 
     if not availability.read_only:
-        label = "AI 분석 후보 (재)생성" if analysis is not None else "AI 분석 후보 생성"
+        label = (
+            "AI 분석 후보 (재)생성 (예상 2~5분)"
+            if analysis is not None
+            else "AI 분석 후보 생성 (예상 2~5분)"
+        )
         if st.button(label, key=f"scr2_generate_btn__{run_state.run_id}"):
-            with st.spinner("AI 분석 후보를 생성하는 중..."):
+            generate_start = time.monotonic()
+            with st.spinner("AI 분석 후보를 생성하는 중... (예상 2~5분)"):
                 outcome = _run_action(
-                    lambda: actions.generate_candidates(settings, store, run_state),
-                    success_message="AI 분석 후보 생성 완료.",
+                    lambda: actions.generate_candidates(settings, store, run_state)
                 )
             if outcome is not None:
+                elapsed = time.monotonic() - generate_start
+                st.success(f"AI 분석 후보 생성 완료 ({elapsed:.0f}초).")
                 st.rerun()
     elif availability.reason:
         st.info(availability.reason)
@@ -672,14 +865,20 @@ def render_screen5(settings: Settings, store: RunStore, run_state: RunState) -> 
     can_generate = run_state.current_state in state.SCREEN5_DRAFT_STATES
 
     if can_generate:
-        label = "AI 전략 초안 (재)생성" if draft is not None else "AI 전략 초안 생성"
+        label = (
+            "AI 전략 초안 (재)생성 (예상 ~1분)"
+            if draft is not None
+            else "AI 전략 초안 생성 (예상 ~1분)"
+        )
         if st.button(label, key=f"scr5_generate_btn__{run_id}"):
-            with st.spinner("전략 초안을 생성하는 중..."):
+            generate_start = time.monotonic()
+            with st.spinner("전략 초안을 생성하는 중... (예상 ~1분)"):
                 draft_outcome = _run_action(
-                    lambda: actions.generate_strategy_draft_action(settings, store, run_state),
-                    success_message="전략 초안 생성 완료.",
+                    lambda: actions.generate_strategy_draft_action(settings, store, run_state)
                 )
             if draft_outcome is not None:
+                elapsed = time.monotonic() - generate_start
+                st.success(f"전략 초안 생성 완료 ({elapsed:.0f}초).")
                 st.rerun()
 
     if draft is None:
