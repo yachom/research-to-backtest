@@ -31,8 +31,8 @@ make check          # ruff + format --check + mypy(strict) + pytest(unit)
 set -a && source .env && set +a && DATA_DIR=$PWD/data .venv/bin/python -m pytest
 ```
 
-- 현재 기준: **807 passed·4 skipped**(live LLM 포함) / mypy strict 164파일 0 이슈. 병합 후 이 상태를 유지하지 못하면 병합하지 말 것. live 테스트는 .env 인증 없으면 skip된다.
-- CLI: `.venv/bin/r2b` — 데이터: `resolve-company`·`collect-financials`(--include-xbrl 포함)·`collect-market`·`build-financials`·`parse-xbrl`·`reconcile-financials`. HITL(run 기반, 게이트 위반 exit 4): `create-run`·`runs`·`status`·`research`(=create-run+후보 생성)·`generate-candidates`(**live LLM**)·`create-analyst-view`·`create-hypothesis`·`generate-strategy-draft`(**live LLM**)·`approve-strategy`·`backtest`·`submit-interpretation`. 남은 스텁: `generate-report`(C3', 게이트 검사 후 exit 2). 계약: docs/specs/CLI-integration.md·W3a·W3b. LLM 호출은 configs/llm.yaml(Haiku 핀·timeout 360s) 경유, AIUsageRecord 자동 기록.
+- 현재 기준: **837 passed·4 skipped**(live LLM 포함) / mypy strict 179파일 0 이슈. 병합 후 이 상태를 유지하지 못하면 병합하지 말 것. live 테스트는 .env 인증 없으면 skip된다.
+- CLI: `.venv/bin/r2b` — 데이터: `resolve-company`·`collect-financials`(--include-xbrl 포함)·`collect-market`·`build-financials`·`parse-xbrl`·`reconcile-financials`. HITL(run 기반, 게이트 위반 exit 4): `create-run`·`runs`·`status`·`research`(=create-run+후보 생성)·`generate-candidates`(**live LLM**)·`create-analyst-view`·`create-hypothesis`·`generate-strategy-draft`(**live LLM**)·`approve-strategy`·`backtest`·`submit-interpretation`·`generate-report`(15섹션+강건성, **live LLM** 설명 초안 — 실패해도 생성). 스텁 없음 — 19명령 전부 실구현. UI: `python -m streamlit run src/research_backtest/app/streamlit_app.py`(7화면, CLI와 동일 게이트). 계약: docs/specs/CLI-integration.md·W3a·W3b·W3c. LLM 호출은 configs/llm.yaml(Haiku 핀·timeout 360s) 경유, AIUsageRecord 자동 기록.
 
 ## 3. 절대 규칙
 
@@ -60,6 +60,5 @@ set -a && source .env && set +a && DATA_DIR=$PWD/data .venv/bin/python -m pytest
 ## 6. 다음 작업 (이 순서로)
 
 1. ~~CLI 통합 패스~~ — **완료(2026-07-15)**: r2b 18명령 + 게이트 exit 4 + RunManifest. 계약은 docs/specs/CLI-integration.md, 스냅샷은 PROGRESS #3.
-2. ~~Wave 3a·3b (C1'·C2')~~ — **완료(2026-07-15)**: core/llm(Haiku)·Evidence Store·후보 생성기·전략 초안 전부 live 검증, E2E 체인(research→…→COMPLETE)이 CLI만으로 관통. 스냅샷은 PROGRESS #4.
-3. **Wave 3c (C3')**: 15-섹션 보고서(저작 주체 표기·논지형 제목) + result_explanation 초안(LLM, quant/prompts) + `generate-report` 실구현 + Streamlit 7화면 + 강건성 분석 + 문서 재편(§25 — README→PROJECT_SPEC.md 이관).
-4. 제출물 마감: 과제1·과제2 PDF, README 재편(실행 가이드) — C3'.
+2. ~~Wave 3 전체 (C1'·C2'·C3')~~ — **완료(2026-07-15)**: 전 마일스톤(A0~A6·B1~B4·H1·C1'~C3') 종료. E2E run(20260715_152048)이 research→…→COMPLETE→15섹션 보고서까지 관통. 문서 재편(§25) 완료 — PROJECT_SPEC.md 이관·README 재편·SOLUTION_OVERVIEW.md. 스냅샷은 PROGRESS #5.
+3. **제출물 마감**(남은 유일 작업): 과제1 = run 보고서(research_report.md) 기반, 과제2 = docs/SOLUTION_OVERVIEW.md·ai_usage_log·프롬프트 파일 기반 — PDF 변환·최종 패키징.

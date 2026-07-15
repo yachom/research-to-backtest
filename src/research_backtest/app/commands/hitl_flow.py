@@ -115,7 +115,7 @@ _NEXT_STEP_HINTS: dict[PipelineState, str] = {
     PipelineState.STRATEGY_APPROVED: "backtest",
     PipelineState.BACKTEST_COMPLETE: "submit-interpretation",
     PipelineState.AWAITING_INTERPRETATION: "submit-interpretation",
-    PipelineState.COMPLETE: "generate-report (C3' 예정)",
+    PipelineState.COMPLETE: "generate-report",
 }
 
 # docs/OUTPUT_SCHEMA.md §0 산출물 체크리스트 순서. backtest 산출물은 OUTPUT_SCHEMA의
