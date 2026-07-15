@@ -61,4 +61,4 @@ set -a && source .env && set +a && DATA_DIR=$PWD/data .venv/bin/python -m pytest
 
 1. ~~CLI 통합 패스~~ — **완료(2026-07-15)**: r2b 18명령 + 게이트 exit 4 + RunManifest. 계약은 docs/specs/CLI-integration.md, 스냅샷은 PROGRESS #3.
 2. ~~Wave 3 전체 (C1'·C2'·C3')~~ — **완료(2026-07-15)**: 전 마일스톤(A0~A6·B1~B4·H1·C1'~C3') 종료. E2E run(20260715_152048)이 research→…→COMPLETE→15섹션 보고서까지 관통. 문서 재편(§25) 완료 — PROJECT_SPEC.md 이관·README 재편·SOLUTION_OVERVIEW.md. 스냅샷은 PROGRESS #5.
-3. **제출물 마감**(남은 유일 작업): 과제1 = run 보고서(research_report.md) 기반, 과제2 = docs/SOLUTION_OVERVIEW.md·ai_usage_log·프롬프트 파일 기반 — PDF 변환·최종 패키징.
+3. ~~제출물 마감~~ — **완료(2026-07-15)**: `submission/`(과제1·2 md+PDF+증빙). GitHub 공개: 정본 [research-to-backtest](https://github.com/yachom/research-to-backtest) + 과제별 미러 2개(서브모듈 `projects/`, 재생성은 `scripts/sync_mirror.sh`). **과제 전체 종료** — 이후 변경 시 정본에 커밋 후 push, 미러는 sync_mirror로 재생성.

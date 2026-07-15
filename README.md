@@ -81,7 +81,22 @@ set -a && source .env && set +a && DATA_DIR=$PWD/data .venv/bin/python -m pytest
 3중(available_from as-of join 방어선 + 지표 레벨 no-lookahead property + 절단 불변)이며
 위반 시 `LookaheadError`로 실행이 중단된다.
 
-## 5. 레이아웃·문서 맵
+## 5. 레포 구성 (멀티레포)
+
+이 레포가 **정본**이며 실행·관리는 전부 여기서 한다. 프로젝트 1·2는 과제별 열람용
+**미러 레포**로도 제공되고, 아래 서브모듈로 상위에서 하나로 관리된다:
+
+| 레포 | 역할 |
+|---|---|
+| [research-to-backtest](https://github.com/yachom/research-to-backtest) | **정본 모노레포** (이 레포) — 유일한 실행·수정 지점 |
+| [research-to-backtest-p1-research](https://github.com/yachom/research-to-backtest-p1-research) | Project 1 미러 — 리서치·가설 관점 뷰 (`projects/project1-research`) |
+| [research-to-backtest-p2-backtest](https://github.com/yachom/research-to-backtest-p2-backtest) | Project 2 미러 — DSL·백테스트 관점 뷰 (`projects/project2-backtest`) |
+
+미러는 읽기 전용 스냅샷(반대편 프로젝트 디렉토리 제외)이며 정본 갱신 시
+`zsh scripts/sync_mirror.sh p1 <url>` / `p2 <url>`로 재생성한다. 제출물은
+`submission/`(과제 1 보고서·과제 2 AI 활용 검증, PDF 포함).
+
+## 6. 레이아웃·문서 맵
 
 ```text
 src/research_backtest/
@@ -101,7 +116,7 @@ src/research_backtest/
 | `docs/DATA_NOTES.md` | 설계를 바꾼 실데이터 관찰 기록 |
 | `docs/specs/` | 마일스톤별 구현 계약 |
 
-## 6. 원칙 요약
+## 7. 원칙 요약
 
 1. **Point-in-Time**: 재무값은 `available_from` 이후에만, as-of join 외 병합 금지.
 2. **승인 게이트**: 미승인 가설·전략은 실행 불가(`core/hitl/gates.py`) — 코드로 강제.
