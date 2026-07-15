@@ -4,6 +4,7 @@ resolve-company(A1)·collect-financials(A2)는 구현되었다. 나머지 명령
 구현 시점은 docs/MILESTONES.md의 Phase 표를 따른다.
 """
 
+from collections import Counter
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -15,6 +16,8 @@ from rich.console import Console
 from rich.table import Table
 
 from research_backtest import __version__
+from research_backtest.app.commands.backtest_cmd import register as register_backtest
+from research_backtest.app.commands.data_pipeline import register as register_data_pipeline
 from research_backtest.core.config import (
     Settings,
     get_settings,
@@ -39,6 +42,11 @@ from research_backtest.core.dart.financial_api import (
     collect_financials as run_collect_financials,
 )
 from research_backtest.core.dart.models import DartFiling, ResolveMethod, ResolveResult
+from research_backtest.core.dart.xbrl_downloader import (
+    XbrlDownloadOutcome,
+    download_xbrl_filings,
+    xbrl_filing_dir,
+)
 from research_backtest.core.exceptions import (
     ConfigError,
     DartApiError,
@@ -66,6 +74,11 @@ app = typer.Typer(
     # 예외 트레이스의 로컬 변수 출력에 인증키가 노출되지 않도록 비활성화 (README §30.2)
     pretty_exceptions_show_locals=False,
 )
+
+# 서브커맨드 모듈 등록 (명세 §4.6 — data_pipeline·backtest; hitl_flow는 병합 시 추가).
+register_data_pipeline(app)
+register_backtest(app)
+
 console = Console()
 
 KST = ZoneInfo("Asia/Seoul")
@@ -239,10 +252,6 @@ def collect_financials(
             f"전체 재무제표 API는 {MIN_SUPPORTED_YEAR}년 이후 사업연도만 제공합니다 (README §6.4)."
         )
     fs_divs = _parse_scopes(scopes)
-    if include_xbrl:
-        console.print(
-            "[yellow]XBRL 수집은 Milestone B1에서 구현됩니다 — 이번 실행에서는 무시[/yellow]"
-        )
 
     try:
         settings = get_settings()
@@ -252,6 +261,7 @@ def collect_financials(
         console.print(f"[red]설정 오류: {err}[/red]")
         raise typer.Exit(code=CONFIG_ERROR_EXIT_CODE) from err
 
+    xbrl_outcomes: list[XbrlDownloadOutcome] | None = None
     try:
         with DartClient(
             api_key,
@@ -276,11 +286,25 @@ def collect_financials(
                 force=force_download,
                 min_interval_seconds=dart_config.min_interval_seconds,
             )
+            if include_xbrl:
+                xbrl_outcomes = _collect_xbrl_filings(
+                    client,
+                    corp,
+                    from_year=from_year,
+                    to_year=to_year,
+                    data_dir=settings.data_dir,
+                    force=force_download,
+                    min_interval_seconds=dart_config.min_interval_seconds,
+                )
     except (DartApiError, DartTransportError) as err:
         console.print(f"[red]DART 호출 실패: {err}[/red]")
         raise typer.Exit(code=RESOLVE_FAILURE_EXIT_CODE) from err
 
     _print_collection(corp, summary, out_dir)
+    if xbrl_outcomes is not None:
+        _print_xbrl_collection(xbrl_outcomes, settings.data_dir, corp.corp_code)
+        if any(outcome.result == "FAILED" for outcome in xbrl_outcomes):
+            raise typer.Exit(code=RESOLVE_FAILURE_EXIT_CODE)
 
 
 _REPRT_LABELS: dict[ReprtCode, str] = {
@@ -338,6 +362,70 @@ def _print_collection(corp: DartCorporation, summary: CollectionSummary, out_dir
     line_count = _count_jsonl_lines(out_dir / JSONL_FILENAME)
     console.print(f"저장 경로: {out_dir}")
     console.print(f"병합본 {JSONL_FILENAME}: {line_count}라인")
+
+
+_XBRL_RESULT_LABELS: dict[str, str] = {
+    "FETCHED": "신규 수집",
+    "CACHED": "캐시",
+    "NO_DATA": "데이터 없음(013/014)",
+    "NO_DATA_CACHED": "데이터 없음(캐시)",
+    "SKIPPED": "건너뜀",
+    "FAILED": "실패",
+}
+
+
+def _collect_xbrl_filings(
+    client: DartClient,
+    corp: DartCorporation,
+    *,
+    from_year: int,
+    to_year: int,
+    data_dir: Path,
+    force: bool,
+    min_interval_seconds: float,
+) -> list[XbrlDownloadOutcome]:
+    """수집 재무연도 범위의 정기보고서 XBRL 원본을 함께 수집한다 (명세 §4.5, B1).
+
+    FY 연간보고서는 이듬해 3월에 접수되므로 ``rcept_dt.year ∈ [from_year, to_year+1]``
+    로 경계를 포함해 필터한다. 실제 다운로드는 ``download_xbrl_filings``가 건별
+    캐시·negative cache·실패 격리를 담당한다(멱등).
+    """
+    today = datetime.now(KST).date()
+    filings = find_periodic_filings(
+        client, corp.corp_code, as_of_date=today, lookback_years=today.year - from_year + 1
+    )
+    selected = [f for f in filings if from_year <= f.rcept_dt.year <= to_year + 1]
+    return download_xbrl_filings(
+        client,
+        selected,
+        data_dir=data_dir,
+        force=force,
+        min_interval_seconds=min_interval_seconds,
+    )
+
+
+def _print_xbrl_collection(
+    outcomes: list[XbrlDownloadOutcome], data_dir: Path, corp_code: str
+) -> None:
+    """XBRL 원본 수집 결과 테이블 + 결과별 건수 요약 (명세 §4.5)."""
+    table = Table(title="XBRL 원본 수집 결과 (README §19.4)")
+    for column in ("rcept_no", "보고서", "결과", "경로 또는 사유"):
+        table.add_column(column)
+    for outcome in outcomes:
+        if outcome.result in ("FETCHED", "CACHED"):
+            detail = str(xbrl_filing_dir(data_dir, corp_code, outcome.rcept_no))
+        else:
+            detail = outcome.reason or "-"
+        table.add_row(
+            outcome.rcept_no,
+            outcome.report_name,
+            f"{_XBRL_RESULT_LABELS.get(outcome.result, outcome.result)}({outcome.result})",
+            detail,
+        )
+    console.print(table)
+    counts = Counter(outcome.result for outcome in outcomes)
+    summary = " ".join(f"{key}:{counts[key]}" for key in sorted(counts))
+    console.print(f"XBRL 결과 요약: {summary or '수집 대상 없음'}")
 
 
 @app.command("collect-market")
@@ -518,25 +606,6 @@ def _print_market_collection(
         )
 
 
-@app.command("parse-xbrl")
-def parse_xbrl(
-    corp_code: Annotated[str, typer.Option("--corp-code", help="DART 8자리 법인코드")],
-    rcept_no: Annotated[str, typer.Option("--rcept-no", help="공시 접수번호")],
-) -> None:
-    """XBRL 원본에서 Fact·Context·Unit·Dimension을 추출한다."""
-    _not_implemented("Milestone B2")
-
-
-@app.command("reconcile-financials")
-def reconcile_financials(
-    company: Annotated[str, typer.Option("--company", help="기업명 또는 6자리 종목코드")],
-    year: Annotated[int, typer.Option("--year", help="사업연도")],
-    report: Annotated[str, typer.Option("--report", help="보고서 종류 (annual/half/q1/q3)")],
-) -> None:
-    """전체 재무제표 API와 XBRL 원본의 대표 계정 수치를 교차검증한다."""
-    _not_implemented("Milestone B3")
-
-
 @app.command()
 def research(
     company: Annotated[str, typer.Option("--company", help="기업명 또는 6자리 종목코드")],
@@ -545,17 +614,6 @@ def research(
 ) -> None:
     """기업분석 보고서와 투자 가설을 생성한다."""
     _not_implemented("Milestone C1")
-
-
-@app.command()
-def backtest(
-    hypothesis: Annotated[str, typer.Option("--hypothesis", help="투자 가설 JSON 경로")],
-    start_date: Annotated[str, typer.Option("--start-date", help="백테스트 시작일")],
-    end_date: Annotated[str, typer.Option("--end-date", help="백테스트 종료일")],
-    benchmark: Annotated[str, typer.Option("--benchmark", help="벤치마크 지수")] = "KOSPI",
-) -> None:
-    """전략을 과거 데이터로 검증한다."""
-    _not_implemented("Milestone A6")
 
 
 def main() -> None:
