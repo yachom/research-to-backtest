@@ -8,7 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
-import pyarrow.parquet as pq  # type: ignore[import-untyped]
+import pyarrow.parquet as pq
 import pytest
 
 from research_backtest.core.constants import FsDiv
@@ -87,7 +87,8 @@ def _cfs_only() -> tuple[FsDiv, ...]:
 
 
 def _assert_dates_are_date32(path: Path, columns: set[str]) -> None:
-    schema = pq.read_schema(path)
+    # pyarrow 24 배포 타입에 read_schema 시그니처가 아직 없다 (부분 py.typed).
+    schema = pq.read_schema(path)  # type: ignore[no-untyped-call]
     for field in schema:
         if field.name in columns:
             assert str(field.type) == "date32[day]", f"{path.name}.{field.name}={field.type}"
