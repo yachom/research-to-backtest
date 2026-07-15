@@ -116,6 +116,19 @@ def _lock_banner(availability: state.ScreenAvailability) -> bool:
 # ---------------------------------------------------------------------------
 
 
+#: 다음 rerun에서 사이드바 selectbox가 선택할 run_id (위젯 키가 아닌 일반 세션 키).
+#: 위젯 key("sidebar_run_select")는 위젯 생성 후 같은 실행에서 대입이 금지되므로
+#: (StreamlitAPIException), run 생성 경로는 이 키에 적어두고 st.rerun()만 한다 —
+#: 사이드바가 다음 실행에서 위젯을 만들기 **전에** 이 값을 위젯 key로 옮긴다.
+_PENDING_RUN_SELECT_KEY = "_pending_run_select_run_id"
+
+
+def _select_run_on_next_rerun(run_id: str) -> None:
+    """run 생성 직후 호출 — 다음 rerun에서 해당 run이 선택되게 예약하고 재실행한다."""
+    st.session_state[_PENDING_RUN_SELECT_KEY] = run_id
+    st.rerun()
+
+
 def render_sidebar(settings: Settings) -> str | None:
     """사이드바(run 선택 + 새 run 생성 + 상태 배지)를 그리고 선택된 run_id를 반환한다."""
     st.sidebar.header("실행(run) 관리")
@@ -127,6 +140,14 @@ def render_sidebar(settings: Settings) -> str | None:
             f"{s.run_id} — {s.company} [{state.PIPELINE_STATE_LABELS[s.current_state]}]"
             for s in summaries
         ]
+        # 예약된 선택(run 생성 직후)을 위젯 생성 전에 적용한다 — run_id 접두 매칭이라
+        # 라벨 형식 변화에 안전하다.
+        pending = st.session_state.pop(_PENDING_RUN_SELECT_KEY, None)
+        if pending is not None:
+            for option in options[1:]:
+                if option.startswith(f"{pending} —"):
+                    st.session_state["sidebar_run_select"] = option
+                    break
         choice = st.sidebar.selectbox("run 선택", options, key="sidebar_run_select")
         if choice != "(선택 안 함)":
             idx = options.index(choice) - 1
@@ -161,11 +182,7 @@ def render_sidebar(settings: Settings) -> str | None:
                     _render_resolve_failure(outcome)
                 elif outcome is not None:
                     st.sidebar.success(f"run 생성 완료: {outcome.run_id}")
-                    st.session_state["sidebar_run_select"] = (
-                        f"{outcome.run_id} — {company} "
-                        f"[{state.PIPELINE_STATE_LABELS[outcome.run_state.current_state]}]"
-                    )
-                    st.rerun()
+                    _select_run_on_next_rerun(outcome.run_id)
 
     return selected_run_id
 
@@ -201,11 +218,7 @@ def _create_run_and_rerun(settings: Settings, company: str, as_of: date) -> None
         _render_resolve_failure(outcome)
     elif outcome is not None:
         st.success(f"run 생성 완료: {outcome.run_id}")
-        st.session_state["sidebar_run_select"] = (
-            f"{outcome.run_id} — {company} "
-            f"[{state.PIPELINE_STATE_LABELS[outcome.run_state.current_state]}]"
-        )
-        st.rerun()
+        _select_run_on_next_rerun(outcome.run_id)
 
 
 def _attempt_create_run(settings: Settings, company: str, as_of: date) -> None:

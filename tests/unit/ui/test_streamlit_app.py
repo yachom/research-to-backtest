@@ -49,6 +49,8 @@ from .conftest import (
     make_run_store,
     make_strategy,
     make_strategy_review,
+    mark_financials_ready,
+    mark_market_ready,
     write_backtest_artifacts,
     write_evidence_manifest,
 )
@@ -340,3 +342,35 @@ def test_screen1_prep_execute_creates_run_and_retries(
     data_ready_label = ui_state.PIPELINE_STATE_LABELS[PipelineState.DATA_READY]
     assert any(f"현재 상태: {data_ready_label}" in md.value for md in at.markdown)
     assert _has_key(at.button, f"scr2_generate_btn__{run_dirs[0].name}")
+
+
+def test_sidebar_create_run_with_existing_runs_autoselects_new_run(
+    monkeypatch: pytest.MonkeyPatch, ui_settings: Settings
+) -> None:
+    """기존 run이 있어 사이드바 selectbox가 이미 그려진 상태에서 새 run 생성 (회귀).
+
+    과거 구현은 생성 직후 위젯 key("sidebar_run_select")에 직접 대입해
+    StreamlitAPIException("cannot be modified after the widget ... is
+    instantiated")으로 죽었다 — 첫 run(빈 outputs, selectbox 미생성)만 테스트돼
+    잡히지 않았던 실사용 크래시. 수정 후에는 펜딩 키에 예약하고 다음 rerun에서
+    위젯 생성 **전**에 적용되므로, 예외 없이 새 run이 자동 선택되어야 한다.
+    """
+    make_run_store(ui_settings, "RUN-EXISTING", target_state=PipelineState.DATA_READY)
+    mark_financials_ready(ui_settings)
+    mark_market_ready(ui_settings)
+    monkeypatch.setattr(actions, "resolve_corp", lambda company, settings: SK_HYNIX)
+    monkeypatch.setenv("DART_API_KEY", "test-dart-key")
+
+    at = AppTest.from_file(str(APP_PATH), default_timeout=30).run()
+    assert _has_key(at.selectbox, "sidebar_run_select")  # 전제: 위젯이 이미 존재
+
+    at.text_input(key="sidebar_new_company").set_value(CORP_NAME)
+    at.run()
+    at.button(key="sidebar_create_run_btn").click().run()
+
+    assert not at.exception
+    run_ids = sorted(p.name for p in ui_settings.outputs_dir.iterdir() if p.is_dir())
+    assert len(run_ids) == 2
+    new_run_id = next(r for r in run_ids if r != "RUN-EXISTING")
+    selected = at.selectbox(key="sidebar_run_select").value
+    assert selected is not None and selected.startswith(f"{new_run_id} —")
