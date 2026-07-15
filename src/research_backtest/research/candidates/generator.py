@@ -41,18 +41,13 @@ from research_backtest.research.evidence.models import EvidencePackage, Financia
 #: 프롬프트 버전 파일 디렉토리 — 이 파일 기준 ``research/prompts/`` (명세 §1, 1804 §12).
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
-#: 프롬프트에 싣는 evidence 상한. 명세 §2.1은 60을 제안했으나 실측에서 이탈했다.
-#: SK하이닉스(as_of 2025-12-31, evidence 122건)에서 Haiku의 사고 토큰(출력)이
-#: configs/llm.yaml의 timeout(120초, 핀·수정 금지)을 좌우하는데, 그 양이 evidence
-#: 수에 단조롭지 않았다(실측 호출당 지연/출력토큰):
-#:   60→~140초/15k · 30→~83초/8.6k · 25→~63초/6k · 20→~70초/7.7k ·
-#:   15→~50초/5k · 10→~125초/14k
-#: evidence가 너무 적으면(≤10) 근거 부족으로 모델이 과도하게 추론해 오히려 느려지고,
-#: 너무 많으면(≥30) 처리량이 늘어 느려진다 — 상위 15건이 반복 측정에서 ~50초로
-#: 가장 안정적(여유 ~70초)이면서 유의도 상위 15건만으로 분석 근거는 충분했다. 확장
-#: 사고 비활성화는 core/llm 소관이라 손대지 않고 입력 evidence 수로 지연을 통제한다.
-#: (재시도는 호출마다 독립적으로 120초 창을 갖는다 — json_call.)
-DEFAULT_MAX_EVIDENCE = 15
+#: 프롬프트에 싣는 evidence 상한 (명세 W3b §2.1의 60). 지연·출력 길이는 evidence
+#: 수 축소가 아니라 **프롬프트의 항목 수 상한**(범주별 최대 3개, 한 문장 서술)으로
+#: 제어한다 — 입력을 15건으로 줄이면 CASH_FLOW·STABILITY처럼 유의도 하위 카테고리가
+#: 통째로 빠져 risk/conflicting 후보의 근거가 사라진다. 초기 구현이 timeout 120초
+#: 제약 아래 15로 낮췄던 실측 이력은 configs/llm.yaml의 360초 상향(2026-07-15,
+#: 메인 세션)으로 해소됐다.
+DEFAULT_MAX_EVIDENCE = 60
 
 #: 코드가 주입하는 프롬프트 버전(모든 v1 파일 공통). LLM 출력에서 받지 않는다.
 PROMPT_VERSION = "v1"
