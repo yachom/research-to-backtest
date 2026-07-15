@@ -78,6 +78,14 @@ COMPLETE
 → `submit-interpretation --input` → `generate-report` (모두 `--run-id` 기반,
 현재 상태 표시 포함)
 
+구현 상태(2026-07-15, docs/specs/CLI-integration.md): 8종 전부 CLI로 존재하며
+사용자 단계 5종(create-analyst-view·create-hypothesis·approve-strategy·backtest·
+submit-interpretation)은 완전 구현, AI·보고서 3종(generate-candidates·
+generate-strategy-draft·generate-report)은 게이트·상태 검사까지 수행하는
+상태 인지형 스텁(C1'·C2'·C3'에서 실구현). 보강 명령: `create-run --company
+--as-of-date`(run 생성 진입점 — §2의 "기업명·분석 기준일 입력" 단계),
+`status --run-id`·`runs`(원문 §13의 상태 표시). 승인 게이트 차단은 종료 코드 4.
+
 ## 6. 최종 보고서 구조 (15개 섹션, 작성 주체 표기)
 
 1. 분석 대상과 기준일 / 2. 분석 질문(사용자) / 3. 핵심 결론(사용자) /

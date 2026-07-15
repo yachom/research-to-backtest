@@ -16,6 +16,17 @@ ALL_COMMANDS = [
     "reconcile-financials",
     "research",
     "backtest",
+    # HITL 워크플로 (1804 §14 + 명세 CLI-integration §5)
+    "create-run",
+    "runs",
+    "status",
+    "create-analyst-view",
+    "create-hypothesis",
+    "approve-strategy",
+    "submit-interpretation",
+    "generate-candidates",
+    "generate-strategy-draft",
+    "generate-report",
 ]
 
 

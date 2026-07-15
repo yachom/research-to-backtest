@@ -5,6 +5,48 @@
 
 ---
 
+## 중간 기록 #3 — 2026-07-15 (CLI 통합 패스 완료)
+
+### 마일스톤 보드
+
+| 상태 | 마일스톤 |
+|---|---|
+| ✅ 병합 완료 | Wave 1·2 전체 + **CLI 통합 패스** (r2b 18명령 — 데이터 6 + HITL 8 + 보강 create-run·runs·status + 스텁 research) |
+| ⏭ 남은 작업 | Wave 3: C1' Evidence+후보 생성 · C2' 전략 초안+리뷰 → C3' 보고서·Streamlit·강건성 · 제출물 마감 |
+
+### 품질 게이트 (main)
+
+pytest **689 passed·4 skipped**(전 integration 포함), ruff·format 클린, **mypy strict 132파일 0 이슈**.
+
+### CLI 통합 패스 하이라이트
+
+1. **HITL 체인이 CLI로 실데이터 관통**: `create-run`(DART 식별·데이터 준비 검사·RunManifest)
+   → create-analyst-view → create-hypothesis(APPROVED) → approve-strategy(초안 동등성·
+   diff 정합·A5 재컴파일 5단계 검증) → `backtest --run-id` → submit-interpretation(가설
+   판정 status 반영) → COMPLETE. C1'·C2' 미구현 구간은 auto_approved=True 수동 전진으로 대체.
+2. **백테스트 CLI가 Wave 2 기록 재현**: §23.4 전략, 2016~2025 — 누적 +110.76% · 5거래 ·
+   승률 60% · PF 8.13 · MDD −16.87% · KOSPI 대비 −8.87%p (PROGRESS #2와 일치 = 회귀 없음).
+3. **게이트 강제 상시화**: 승인 게이트 차단 전용 종료 코드 **4** 신설(미달 상태·미승인
+   가설·COMPLETE 재백테스트 거부), AI 스텁 3종도 게이트 검사 후 exit 2. evidence 검증
+   생략 경로 없음.
+4. `collect-financials --include-xbrl` 실연결(B1), `reconcile-financials`는 전량 대조 후
+   --year/--report 표시 필터(총 290 = 연간 70 MATCH 100% + 분기 REQUIRES_REVIEW 30 → 기본
+   exit 0, --strict exit 1), RunManifest 구현 보강(OUTPUT_SCHEMA §0.1).
+
+### 에이전트 운영 (전부 워크트리 격리 → 메인 병합·재검증)
+
+T1=Opus(+1,623줄/8파일, 데이터·백테스트) ∥ T2=Sonnet(+1,903줄/6파일, HITL 워크플로) —
+2트랙 병렬, cli.py 단독 소유(T1)·공용 `__init__.py` 바이트 고정으로 **병합 충돌 0**.
+명세 이탈 0(미규정 판단 4건은 코드 주석·보고 기록). 등록 배선·전체 게이트·실데이터
+스모크는 메인 세션이 수행(계약: docs/specs/CLI-integration.md).
+
+### 다음
+
+Wave 3 (C1' ∥ C2' → C3'). LLM은 Claude Agent SDK + 구독 OAuth 토큰(발급 완료, D2 재개정)
+— 착수 시 스모크 테스트부터(CLAUDE.md §4).
+
+---
+
 ## 중간 기록 #2 — 2026-07-14 (Wave 2 완료)
 
 ### 마일스톤 보드

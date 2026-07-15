@@ -18,6 +18,7 @@ from rich.table import Table
 from research_backtest import __version__
 from research_backtest.app.commands.backtest_cmd import register as register_backtest
 from research_backtest.app.commands.data_pipeline import register as register_data_pipeline
+from research_backtest.app.commands.hitl_flow import register as register_hitl_flow
 from research_backtest.core.config import (
     Settings,
     get_settings,
@@ -75,9 +76,10 @@ app = typer.Typer(
     pretty_exceptions_show_locals=False,
 )
 
-# 서브커맨드 모듈 등록 (명세 §4.6 — data_pipeline·backtest; hitl_flow는 병합 시 추가).
+# 서브커맨드 모듈 등록 (명세 CLI-integration §4.6·§5.8).
 register_data_pipeline(app)
 register_backtest(app)
+register_hitl_flow(app)
 
 console = Console()
 

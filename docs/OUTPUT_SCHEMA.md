@@ -59,6 +59,30 @@ class CandidateAnalysis(BaseModel):
 
 역할 분리 테스트(원문 §18): CandidateAnalysis에는 최종 투자 의견 필드가 **없어야 한다**.
 
+## 0.1 RunManifest (구현 보강 — CLI 통합 패스, docs/specs/CLI-integration.md §5.0)
+
+`run_manifest.json`(README §29)의 코드화. RunState(진행 상태·전이 이력)와 역할을
+분리해 **불변 식별 정보만** 담는다 — README §29의 config_hash·started_at·
+completed_at·status는 채택하지 않는다(상태·이력은 run_state.json이 정본, 설정값은
+산출물 자체가 기록). `r2b create-run`이 생성하고 `r2b backtest`가 corp_code·
+stock_code·as_of_date를 소비한다.
+
+```python
+class RunManifest(BaseModel):
+    run_id: str
+    company_query: str            # 사용자 입력 질의 문자열 (resolve 이전 값)
+    corp_code: str                # DART 8자리
+    corp_name: str
+    corp_eng_name: str | None
+    stock_code: str               # 6자리 — 상장사만 run 생성 허용
+    as_of_date: str               # YYYY-MM-DD (분석 기준일)
+    created_at: str               # KST ISO8601
+    code_version: str | None      # git short hash, best-effort
+```
+
+비고: §0 트리의 `charts/`는 C3' 예정이며, A6 백테스트의 실제 산출물 3종은
+`backtest_result.json`·`trade_log.csv`·`daily_portfolio.csv`다(명세 A6 §5).
+
 ## 2. AnalystView (사용자 — 원문 §5 그대로)
 
 필드: view_id, author, research_question, core_thesis, selected_evidence_ids,
