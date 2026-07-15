@@ -1,0 +1,133 @@
+{
+  "strategy_name": "FundamentalsFlowBreakout",
+  "start_date": "2016-01-01",
+  "end_date": "2025-12-31",
+  "condition_ablation": [
+    {
+      "variant": "가격 모멘텀만",
+      "sources": [
+        "PRICE"
+      ],
+      "num_conditions": 1,
+      "num_trades": 31,
+      "cumulative_return": 2.6187670216991283,
+      "max_drawdown": -0.36105518488887656,
+      "win_rate": 0.45161290322580644,
+      "profit_factor": 3.2001344006567405
+    },
+    {
+      "variant": "실적 모멘텀만",
+      "sources": [
+        "FINANCIAL"
+      ],
+      "num_conditions": 1,
+      "num_trades": 35,
+      "cumulative_return": 2.4647810336087566,
+      "max_drawdown": -0.3638142176556416,
+      "win_rate": 0.6285714285714286,
+      "profit_factor": 3.2479565694348125
+    },
+    {
+      "variant": "실적 + 가격",
+      "sources": [
+        "FINANCIAL",
+        "PRICE"
+      ],
+      "num_conditions": 2,
+      "num_trades": 5,
+      "cumulative_return": 1.2363797812990005,
+      "max_drawdown": -0.16870045311080017,
+      "win_rate": 0.6,
+      "profit_factor": 8.536219653965492
+    },
+    {
+      "variant": "실적 + 수급",
+      "sources": [
+        "FINANCIAL",
+        "FLOW"
+      ],
+      "num_conditions": 2,
+      "num_trades": 26,
+      "cumulative_return": 1.3910261485948032,
+      "max_drawdown": -0.3571771625854011,
+      "win_rate": 0.5384615384615384,
+      "profit_factor": 2.8270112401485292
+    },
+    {
+      "variant": "실적 + 수급 + 가격",
+      "sources": [
+        "FINANCIAL",
+        "FLOW",
+        "PRICE"
+      ],
+      "num_conditions": 3,
+      "num_trades": 5,
+      "cumulative_return": 1.107641685820251,
+      "max_drawdown": -0.16871121532094457,
+      "win_rate": 0.6,
+      "profit_factor": 8.133177781662315
+    }
+  ],
+  "cost_sensitivity": [
+    {
+      "multiplier": 0.0,
+      "commission_rate": 0.0,
+      "sell_tax_rate": 0.0,
+      "slippage_rate": 0.0,
+      "num_trades": 5,
+      "cumulative_return": 1.1507049999999999,
+      "max_drawdown": -0.16529232691974782,
+      "win_rate": 0.6,
+      "profit_factor": 8.757736128901772
+    },
+    {
+      "multiplier": 1.0,
+      "commission_rate": 0.00015,
+      "sell_tax_rate": 0.0018,
+      "slippage_rate": 0.001,
+      "num_trades": 5,
+      "cumulative_return": 1.107641685820251,
+      "max_drawdown": -0.16871121532094457,
+      "win_rate": 0.6,
+      "profit_factor": 8.133177781662315
+    },
+    {
+      "multiplier": 2.0,
+      "commission_rate": 0.0003,
+      "sell_tax_rate": 0.0036,
+      "slippage_rate": 0.002,
+      "num_trades": 5,
+      "cumulative_return": 1.0657879702022002,
+      "max_drawdown": -0.1754914910192268,
+      "win_rate": 0.6,
+      "profit_factor": 7.574054197814827
+    }
+  ],
+  "subperiod": [
+    {
+      "label": "전반부",
+      "start_date": "2016-01-01",
+      "end_date": "2020-12-30",
+      "num_trades": 0,
+      "cumulative_return": 0.0,
+      "max_drawdown": 0.0,
+      "win_rate": null,
+      "profit_factor": null
+    },
+    {
+      "label": "후반부",
+      "start_date": "2020-12-30",
+      "end_date": "2025-12-31",
+      "num_trades": 5,
+      "cumulative_return": 1.107641685820251,
+      "max_drawdown": -0.16871121532094457,
+      "win_rate": 0.6,
+      "profit_factor": 8.133177781662315
+    }
+  ],
+  "skipped": [
+    "인샘플/아웃오브샘플 분리 — 후순위(제출 후 확장)",
+    "파라미터 민감도 — 후순위(제출 후 확장)",
+    "시장 국면 분석 — 후순위(제출 후 확장)"
+  ]
+}
