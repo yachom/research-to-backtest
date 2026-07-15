@@ -31,7 +31,7 @@ make check          # ruff + format --check + mypy(strict) + pytest(unit)
 set -a && source .env && set +a && DATA_DIR=$PWD/data .venv/bin/python -m pytest
 ```
 
-- 현재 기준: **837 passed·4 skipped**(live LLM 포함) / mypy strict 179파일 0 이슈. 병합 후 이 상태를 유지하지 못하면 병합하지 말 것. live 테스트는 .env 인증 없으면 skip된다.
+- 현재 기준: **861 passed·4 skipped**(live LLM 포함) / mypy strict 180파일 0 이슈. 병합 후 이 상태를 유지하지 못하면 병합하지 말 것. live 테스트는 .env 인증 없으면 skip된다.
 - CLI: `.venv/bin/r2b` — 데이터: `resolve-company`·`collect-financials`(--include-xbrl 포함)·`collect-market`·`build-financials`·`parse-xbrl`·`reconcile-financials`. HITL(run 기반, 게이트 위반 exit 4): `create-run`·`runs`·`status`·`research`(=create-run+후보 생성)·`generate-candidates`(**live LLM**)·`create-analyst-view`·`create-hypothesis`·`generate-strategy-draft`(**live LLM**)·`approve-strategy`·`backtest`·`submit-interpretation`·`generate-report`(15섹션+강건성, **live LLM** 설명 초안 — 실패해도 생성). 스텁 없음 — 19명령 전부 실구현. UI: `python -m streamlit run src/research_backtest/app/streamlit_app.py`(7화면, CLI와 동일 게이트). 계약: docs/specs/CLI-integration.md·W3a·W3b·W3c. LLM 호출은 configs/llm.yaml(Haiku 핀·timeout 360s) 경유, AIUsageRecord 자동 기록.
 
 ## 3. 절대 규칙
