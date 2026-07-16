@@ -1,14 +1,14 @@
 {
-  "run_id": "20260715_152048_SK_HYNIX_INC",
-  "company": "SK하이닉스",
-  "as_of_date": "2025-12-31",
+  "run_id": "20260716_101023_NAVER_CORPORATION",
+  "company": "NAVER",
+  "as_of_date": "2026-07-16",
   "current_state": "COMPLETE",
   "transitions": [
     {
       "from_state": null,
       "to_state": "DATA_READY",
       "actor": "user",
-      "at": "2026-07-15T15:20:48.442663+09:00",
+      "at": "2026-07-16T10:10:23.426141+09:00",
       "auto_approved": false,
       "note": null
     },
@@ -16,7 +16,7 @@
       "from_state": "DATA_READY",
       "to_state": "CANDIDATE_ANALYSIS_READY",
       "actor": "system",
-      "at": "2026-07-15T15:24:11.719310+09:00",
+      "at": "2026-07-16T10:12:11.511311+09:00",
       "auto_approved": false,
       "note": "generate-candidates: model=claude-haiku-4-5-20251001, 가설 후보 4건"
     },
@@ -24,7 +24,7 @@
       "from_state": "CANDIDATE_ANALYSIS_READY",
       "to_state": "AWAITING_ANALYST_VIEW",
       "actor": "system",
-      "at": "2026-07-15T15:24:11.719357+09:00",
+      "at": "2026-07-16T10:12:11.511340+09:00",
       "auto_approved": false,
       "note": "후보 검토 대기"
     },
@@ -32,7 +32,7 @@
       "from_state": "AWAITING_ANALYST_VIEW",
       "to_state": "ANALYST_VIEW_APPROVED",
       "actor": "user",
-      "at": "2026-07-15T15:24:36.700683+09:00",
+      "at": "2026-07-16T10:26:41.480267+09:00",
       "auto_approved": false,
       "note": null
     },
@@ -40,7 +40,7 @@
       "from_state": "ANALYST_VIEW_APPROVED",
       "to_state": "HYPOTHESIS_DRAFT",
       "actor": "user",
-      "at": "2026-07-15T15:24:37.237669+09:00",
+      "at": "2026-07-16T10:31:34.462441+09:00",
       "auto_approved": false,
       "note": null
     },
@@ -48,7 +48,7 @@
       "from_state": "HYPOTHESIS_DRAFT",
       "to_state": "HYPOTHESIS_APPROVED",
       "actor": "user",
-      "at": "2026-07-15T15:24:37.237687+09:00",
+      "at": "2026-07-16T10:31:54.133764+09:00",
       "auto_approved": false,
       "note": null
     },
@@ -56,7 +56,7 @@
       "from_state": "HYPOTHESIS_APPROVED",
       "to_state": "STRATEGY_DRAFT_READY",
       "actor": "system",
-      "at": "2026-07-15T15:25:13.837290+09:00",
+      "at": "2026-07-16T10:32:40.593377+09:00",
       "auto_approved": false,
       "note": null
     },
@@ -64,7 +64,7 @@
       "from_state": "STRATEGY_DRAFT_READY",
       "to_state": "AWAITING_STRATEGY_REVIEW",
       "actor": "system",
-      "at": "2026-07-15T15:25:13.837322+09:00",
+      "at": "2026-07-16T10:32:40.593442+09:00",
       "auto_approved": false,
       "note": null
     },
@@ -72,7 +72,7 @@
       "from_state": "AWAITING_STRATEGY_REVIEW",
       "to_state": "STRATEGY_APPROVED",
       "actor": "user",
-      "at": "2026-07-15T15:25:29.281505+09:00",
+      "at": "2026-07-16T10:33:30.554619+09:00",
       "auto_approved": false,
       "note": null
     },
@@ -80,15 +80,15 @@
       "from_state": "STRATEGY_APPROVED",
       "to_state": "BACKTEST_COMPLETE",
       "actor": "system",
-      "at": "2026-07-15T15:25:29.882876+09:00",
+      "at": "2026-07-16T10:33:38.898623+09:00",
       "auto_approved": false,
-      "note": "2016-01-01~2025-12-31 FundamentalsFlowBreakout"
+      "note": "2016-01-01~2026-07-16 FinancialsFlowBreakout"
     },
     {
       "from_state": "BACKTEST_COMPLETE",
       "to_state": "AWAITING_INTERPRETATION",
       "actor": "system",
-      "at": "2026-07-15T15:25:29.882900+09:00",
+      "at": "2026-07-16T10:33:38.898647+09:00",
       "auto_approved": false,
       "note": "사용자 해석 대기"
     },
@@ -96,7 +96,7 @@
       "from_state": "AWAITING_INTERPRETATION",
       "to_state": "COMPLETE",
       "actor": "user",
-      "at": "2026-07-15T15:25:47.824257+09:00",
+      "at": "2026-07-16T15:22:57.641554+09:00",
       "auto_approved": false,
       "note": null
     }

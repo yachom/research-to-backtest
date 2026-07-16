@@ -1,7 +1,7 @@
 {
-  "strategy_name": "FundamentalsFlowBreakout",
+  "strategy_name": "FinancialsFlowBreakout",
   "start_date": "2016-01-01",
-  "end_date": "2025-12-31",
+  "end_date": "2026-07-16",
   "condition_ablation": [
     {
       "variant": "가격 모멘텀만",
@@ -9,23 +9,23 @@
         "PRICE"
       ],
       "num_conditions": 1,
-      "num_trades": 31,
-      "cumulative_return": 2.6187670216991283,
-      "max_drawdown": -0.36105518488887656,
-      "win_rate": 0.45161290322580644,
-      "profit_factor": 3.2001344006567405
+      "num_trades": 27,
+      "cumulative_return": -0.2050987899145229,
+      "max_drawdown": -0.4051369221713548,
+      "win_rate": 0.3333333333333333,
+      "profit_factor": 0.7849270101388973
     },
     {
       "variant": "실적 모멘텀만",
       "sources": [
         "FINANCIAL"
       ],
-      "num_conditions": 1,
-      "num_trades": 35,
-      "cumulative_return": 2.4647810336087566,
-      "max_drawdown": -0.3638142176556416,
-      "win_rate": 0.6285714285714286,
-      "profit_factor": 3.2479565694348125
+      "num_conditions": 3,
+      "num_trades": 57,
+      "cumulative_return": -0.7003741182958514,
+      "max_drawdown": -0.7390724489768348,
+      "win_rate": 0.3157894736842105,
+      "profit_factor": 0.42164328734406253
     },
     {
       "variant": "실적 + 가격",
@@ -33,12 +33,12 @@
         "FINANCIAL",
         "PRICE"
       ],
-      "num_conditions": 2,
-      "num_trades": 5,
-      "cumulative_return": 1.2363797812990005,
-      "max_drawdown": -0.16870045311080017,
-      "win_rate": 0.6,
-      "profit_factor": 8.536219653965492
+      "num_conditions": 4,
+      "num_trades": 8,
+      "cumulative_return": -0.39881796603522335,
+      "max_drawdown": -0.39881796603522335,
+      "win_rate": 0.125,
+      "profit_factor": 0.06484154294257823
     },
     {
       "variant": "실적 + 수급",
@@ -46,12 +46,12 @@
         "FINANCIAL",
         "FLOW"
       ],
-      "num_conditions": 2,
-      "num_trades": 26,
-      "cumulative_return": 1.3910261485948032,
-      "max_drawdown": -0.3571771625854011,
-      "win_rate": 0.5384615384615384,
-      "profit_factor": 2.8270112401485292
+      "num_conditions": 4,
+      "num_trades": 24,
+      "cumulative_return": -0.2660608445317372,
+      "max_drawdown": -0.5243449822593995,
+      "win_rate": 0.25,
+      "profit_factor": 0.6260434999176274
     },
     {
       "variant": "실적 + 수급 + 가격",
@@ -60,12 +60,12 @@
         "FLOW",
         "PRICE"
       ],
-      "num_conditions": 3,
-      "num_trades": 5,
-      "cumulative_return": 1.107641685820251,
-      "max_drawdown": -0.16871121532094457,
-      "win_rate": 0.6,
-      "profit_factor": 8.133177781662315
+      "num_conditions": 5,
+      "num_trades": 6,
+      "cumulative_return": -0.17934152990247354,
+      "max_drawdown": -0.18669964786647353,
+      "win_rate": 0.16666666666666666,
+      "profit_factor": 0.13359306095744494
     }
   ],
   "cost_sensitivity": [
@@ -74,55 +74,55 @@
       "commission_rate": 0.0,
       "sell_tax_rate": 0.0,
       "slippage_rate": 0.0,
-      "num_trades": 5,
-      "cumulative_return": 1.1507049999999999,
-      "max_drawdown": -0.16529232691974782,
-      "win_rate": 0.6,
-      "profit_factor": 8.757736128901772
+      "num_trades": 6,
+      "cumulative_return": -0.15886509999999998,
+      "max_drawdown": -0.16885510000000004,
+      "win_rate": 0.16666666666666666,
+      "profit_factor": 0.16639109726296877
     },
     {
       "multiplier": 1.0,
       "commission_rate": 0.00015,
       "sell_tax_rate": 0.0018,
       "slippage_rate": 0.001,
-      "num_trades": 5,
-      "cumulative_return": 1.107641685820251,
-      "max_drawdown": -0.16871121532094457,
-      "win_rate": 0.6,
-      "profit_factor": 8.133177781662315
+      "num_trades": 6,
+      "cumulative_return": -0.17934152990247354,
+      "max_drawdown": -0.18669964786647353,
+      "win_rate": 0.16666666666666666,
+      "profit_factor": 0.13359306095744494
     },
     {
       "multiplier": 2.0,
       "commission_rate": 0.0003,
       "sell_tax_rate": 0.0036,
       "slippage_rate": 0.002,
-      "num_trades": 5,
-      "cumulative_return": 1.0657879702022002,
-      "max_drawdown": -0.1754914910192268,
-      "win_rate": 0.6,
-      "profit_factor": 7.574054197814827
+      "num_trades": 6,
+      "cumulative_return": -0.1993034159736201,
+      "max_drawdown": -0.2041367942376201,
+      "win_rate": 0.16666666666666666,
+      "profit_factor": 0.10626399422209157
     }
   ],
   "subperiod": [
     {
       "label": "전반부",
       "start_date": "2016-01-01",
-      "end_date": "2020-12-30",
-      "num_trades": 0,
-      "cumulative_return": 0.0,
-      "max_drawdown": 0.0,
-      "win_rate": null,
-      "profit_factor": null
+      "end_date": "2021-04-07",
+      "num_trades": 2,
+      "cumulative_return": -0.10404462950897397,
+      "max_drawdown": -0.10641776102320177,
+      "win_rate": 0.0,
+      "profit_factor": 0.0
     },
     {
       "label": "후반부",
-      "start_date": "2020-12-30",
-      "end_date": "2025-12-31",
-      "num_trades": 5,
-      "cumulative_return": 1.107641685820251,
-      "max_drawdown": -0.16871121532094457,
-      "win_rate": 0.6,
-      "profit_factor": 8.133177781662315
+      "start_date": "2021-04-07",
+      "end_date": "2026-07-16",
+      "num_trades": 4,
+      "cumulative_return": -0.08397939199399918,
+      "max_drawdown": -0.16573928502832036,
+      "win_rate": 0.25,
+      "profit_factor": 0.26878645218691993
     }
   ],
   "skipped": [
