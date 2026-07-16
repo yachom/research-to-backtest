@@ -60,16 +60,9 @@ r2b generate-report     --run-id <run_id>               # 15-섹션 보고서 + 
 
 - 승인되지 않은 단계는 건너뛸 수 없다 — 12-상태 머신과 승인 게이트가 강제하며, 게이트
   위반은 **종료 코드 4**로 구분된다. `r2b runs`로 전체 실행 목록을 본다.
-- 개별 명령 대신 UI로도 같은 흐름을 진행할 수 있다:
-
-```bash
-python -m streamlit run src/research_backtest/app/streamlit_app.py
-```
-
-7화면(기업 입력 → AI 후보 검토 → 관점 작성 → 가설 → 전략 초안 검토 → 백테스트 →
-최종 해석)이 CLI와 동일한 검증·게이트를 사용한다. **데이터가 없는 신규 기업은
-화면 ①이 원클릭으로 수집·빌드까지 수행**하며(§2의 명령들과 동일 로직), 단계별
-예상·실측 시간을 표시한다 — 신규 기업 최초 준비는 실측 기준 약 1분.
+- (선택) 같은 흐름을 열람용 Streamlit 뷰어로도 볼 수 있다 —
+  `python -m streamlit run src/research_backtest/app/streamlit_app.py` (CLI와 동일 게이트,
+  신규 기업은 화면 ①에서 수집·빌드 원클릭). 정식 실행 경로는 위 CLI다.
 
 ## 4. 품질 게이트·테스트
 

@@ -1,12 +1,37 @@
 # 제출물 (Submission)
 
+지원과제 2건(필수) + 우대사항 산출물(첨부).
+
+## 필수 제출물
+
+| 파일 | 과제 | 분량 |
+|---|---|---|
+| `과제1_네이버_기업분석.pdf` | **과제 1** — 기업/산업 분석 (네이버 소버린 AI, 본인의 시각·근거) | A4 약 2매 |
+| `과제2_AI활용_산출물설명.pdf` | **과제 2** — AI로 만든 산출물 1건 + 과정 ("무엇을·도구/프롬프트·어떻게") | A4 |
+
+## 우대사항 산출물 (증권사/거래소 API 연동 · 백테스트 플랫폼)
+
+과제 2에서 설명한 산출물 = **Research-to-Backtest 퀀트 백테스트 플랫폼**.
+
+- GitHub(정본): https://github.com/yachom/research-to-backtest
+- 프로젝트 1(리서치) 미러: https://github.com/yachom/research-to-backtest-p1-research
+- 프로젝트 2(백테스트) 미러: https://github.com/yachom/research-to-backtest-p2-backtest
+- 무엇이 어떻게 구현됐는지: 레포의 `docs/SOLUTION_OVERVIEW.md`, 실행법: 레포 `README.md`
+- **한계(정직):** 데이터 API 연동·백테스트(시뮬레이션)까지 구현. 실제 증권사 주문
+  API를 통한 시스템 트레이딩(라이브 집행)은 미구현 — 과제 2 문서에 로드맵으로 명시.
+
+## 증빙 (evidence/)
+
 | 파일 | 내용 |
 |---|---|
-| `과제1_기업분석보고서.md` / `.pdf` | SK하이닉스 분석 보고서 — 파이프라인이 생성한 15-섹션 보고서(섹션별 저작 주체 태그 포함) |
-| `과제2_AI활용검증.md` / `.pdf` | AI를 어디에 어떻게 썼고 무엇으로 통제·증빙했는가 |
-| `evidence/ai_usage_log.jsonl` | 위 보고서를 만든 실제 LLM 호출 기록 4건 (stage·model·prompt 버전·입출력 산출물) |
-| `evidence/run_state.json` | 파이프라인 상태 전이 이력 — 승인 게이트 통과 기록 (actor·시각·auto_approved) |
-| `evidence/robustness_report.json` | 강건성 분석 원자료 (조건 제거 5변형·비용 민감도·하위 기간) |
+| `ai_usage_log.jsonl` | 시스템 내부 LLM 호출 기록 (stage·model·prompt 버전·입출력) |
+| `run_state.json` | 파이프라인 승인 게이트 전이 이력 |
+| `robustness_report.json` | 강건성 분석 원자료 (조건 제거·비용 민감도·하위 기간) |
 
-생성 run: `20260715_152048_SK_HYNIX_INC` (분석 기준일 2025-12-31).
-시스템 전체 구현 정리는 `docs/SOLUTION_OVERVIEW.md`, 실행 방법은 레포 루트 `README.md`.
+## 부록 (부록/)
+
+| 파일 | 내용 |
+|---|---|
+| `네이버_상세분석_원문.md` | 과제 1의 상세 분석 전문 (PEST·경쟁구도·시나리오·SWOT 등) |
+| `시스템생성리포트_SK하이닉스.md/.pdf` | 플랫폼이 자동 생성한 15-섹션 리포트 예시 (시스템 산출 예시) |
+| `AI활용_상세설명.md/.pdf` | 시스템 내부 AI 활용·통제·증빙의 확장 설명 |
